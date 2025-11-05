@@ -1,0 +1,9 @@
+{
+  "mix": [
+    {"name": "wikitext", "config": "wikitext-2-raw-v1", "prob": 0.5},
+    {"name": "codelion/finepdfs-1B", "prob": 0.3},
+    {"name": "codeparrot/codeparrot-clean", "prob": 0.2}
+  ],
+  "seed": 42,
+  "context_length": 512
+}

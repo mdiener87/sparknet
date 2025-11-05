@@ -1,0 +1,25 @@
+# --- Core deep learning stack (CUDA 12.9 build for ARM64) ---
+torch==2.9.0+cu129
+--extra-index-url https://download.pytorch.org/whl/cu129
+
+
+# --- Hugging Face ecosystem ---
+transformers>=4.57,<5
+datasets>=3.1
+accelerate>=0.34
+huggingface-hub>=0.24
+safetensors>=0.4.3
+tokenizers>=0.20
+
+# --- Optional but highly recommended tools ---
+bitsandbytes>=0.44          # efficient quantized training
+tensorboard>=2.18
+wandb>=0.18                 # experiment tracking (optional)
+numpy>=1.26
+tqdm>=4.66
+psutil>=6.0
+pandas>=2.2
+
+# --- Dev / utility packages ---
+pathlib; python_version >= "3.9"
+rich>=13.8

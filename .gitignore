@@ -13,6 +13,7 @@ data/
 checkpoints/
 outputs/
 logs/
+cache/
 *.pt
 *.bin
 
