@@ -1,0 +1,25 @@
+# Virtual environments
+.venv/
+venv/
+
+# Python cache & compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Data and checkpoints
+data/
+checkpoints/
+outputs/
+logs/
+*.pt
+*.bin
+
+# IDE/project files
+.vscode/
+.idea/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
