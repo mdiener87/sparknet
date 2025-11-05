@@ -6,7 +6,7 @@ import random
 from typing import Dict, Any, Iterable
 
 import torch
-from datasets import load_dataset, interleave_datasets, IterableDataset, Dataset
+from datasets import load_dataset, interleave_datasets, IterableDataset, Dataset, Features, Value
 from transformers import (
     AutoTokenizer,
     GPT2Config,
@@ -51,27 +51,52 @@ sources = []
 probs = []
 
 for m in cfg["mix"]:
-    # Accept either hub datasets or local JSONL via datasets "json" builder
     name = m["name"]
     split = m.get("split", "train")
 
-    kwargs: Dict[str, Any] = {"split": split, "streaming": True}
+    # --- Proper load_dataset call ---
     if name == "json":
-        # Expected: {"name":"json", "data_files":{"train":"data/diener_blog.jsonl"}, "prob": X}
-        kwargs.update(m)
+        # Local JSONL (blog posts)
+        ds = load_dataset(
+            path="json",
+            data_files=m["data_files"],
+            split=split,
+            streaming=True
+        )
     else:
-        kwargs["path"] = name
+        ds = load_dataset(
+            path=name,
+            split=split,
+            streaming=True
+        )
 
-    try:
-        ds = load_dataset(**kwargs)
-        sources.append(ds)
-        probs.append(float(m["prob"]))
-        print(f"✓ streaming source: {name} [{split}] (prob={m['prob']})")
-    except Exception as e:
-        print(f"⚠️ skipping {name}: {e}")
+    # --- Normalize schema if static features are present ---
+    if getattr(ds, "features", None) is not None:
+        features = ds.features
+        updated_cols = []
+        for key, val in features.items():
+            if hasattr(val, "dtype") and val.dtype == "float64":
+                ds = ds.cast_column(key, Value("float32"))
+                updated_cols.append(key)
+        if updated_cols:
+            # rebuild proper Features object (ensures interleave_datasets compatibility)
+            new_features = Features({
+                k: (Value("float32") if k in updated_cols else v)
+                for k, v in features.items()
+            })
+            ds._features = new_features
+            print(f"↻ Casting {name} columns {updated_cols} → Value('float32') for schema alignment")
+    else:
+        print(f"ℹ️  {name} has no static features (streaming parquet) — skipping dtype cast")
+
+    # ✅ Append after processing each dataset
+    sources.append(ds)
+    probs.append(float(m["prob"]))
+    print(f"✓ streaming source: {name} [{split}] (prob={m['prob']})")
 
 if not sources:
     raise RuntimeError("No datasets could be loaded in streaming mode. Check your config/datasets and network.")
+
 
 # normalize probabilities
 psum = sum(probs)
@@ -191,19 +216,19 @@ model_cfg = GPT2Config(
 model = AutoModelForCausalLM.from_config(model_cfg)
 
 # Memory/perf niceties
-model.gradient_checkpointing_enable()
-if hasattr(torch, "compile"):
-    try:
-        model = torch.compile(model)
-    except Exception as _:
-        pass
+model.gradient_checkpointing_disable()
+# if hasattr(torch, "compile"):
+#     try:
+#         model = torch.compile(model)
+#     except Exception as _:
+#         pass
 
 # --------------------------------------------------------------------------------------
 # TrainingArguments
 # - Compute max_steps from token budget so mixture probabilities map to token shares
 # --------------------------------------------------------------------------------------
-per_device_train_batch_size = 4
-gradient_accumulation_steps = 1
+per_device_train_batch_size = 16
+gradient_accumulation_steps = 2
 
 tokens_per_step = block_size * per_device_train_batch_size * gradient_accumulation_steps
 max_steps = math.ceil(target_tokens / tokens_per_step)
@@ -217,17 +242,18 @@ args = TrainingArguments(
     bf16=True,  # Grace-Blackwell: yes
     per_device_train_batch_size=per_device_train_batch_size,
     gradient_accumulation_steps=gradient_accumulation_steps,
-    learning_rate=2e-4,          # slightly gentler for 70M
+    learning_rate=1.5e-4,          # slightly gentler for 70M
     weight_decay=0.01,
     warmup_ratio=0.01,
     lr_scheduler_type="cosine",
     max_steps=max_steps,
     logging_dir="logs/tensorboard",   # fresh run dir
     logging_steps=50,
-    evaluation_strategy="steps",
-    eval_steps=500,              # chart eval loss every 500 steps
-    save_steps=1000,
+    eval_strategy="steps",
+    eval_steps=2000,              # chart eval loss every 500 steps
+    save_steps=5000,
     save_strategy="steps",
+    optim="adamw_torch_fused",
     save_total_limit=3,
     report_to=["tensorboard"],
     remove_unused_columns=False,
@@ -237,32 +263,91 @@ args = TrainingArguments(
 # --------------------------------------------------------------------------------------
 # Training Callbacks
 # --------------------------------------------------------------------------------------
+trainer = Trainer(
+    model=model,
+    args=args,
+    train_dataset=train_ds,
+    eval_dataset=eval_ds,
+    data_collator=collator,
+)
+
+
 
 from transformers import TrainerCallback
-import time
+import time, os
+from torch.utils.tensorboard import SummaryWriter
 
 class ThroughputCallback(TrainerCallback):
-    """Logs examples/sec, tokens/sec, and step time to TensorBoard."""
-    def __init__(self):
+    """
+    Logs throughput metrics (tokens/sec, examples/sec, elapsed minutes)
+    to both console and TensorBoard without interfering with Trainer control flow.
+    """
+
+    def __init__(self, block_size, log_dir=None):
+        self.block_size = block_size
         self.start_time = None
+        self.last_time = None
+        self.last_step = 0
         self.total_tokens = 0
+        self.tb_writer = None
+        self.log_dir = log_dir or os.path.join("logs", "tensorboard")
 
     def on_train_begin(self, args, state, control, **kwargs):
+        # initialize timers and tensorboard writer
         self.start_time = time.time()
+        self.last_time = self.start_time
+        self.last_step = 0
         self.total_tokens = 0
-
-    def on_step_end(self, args, state, control, **kwargs):
-        logs = kwargs.get("logs", {})
-        # approximate tokens processed in this step
-        step_tokens = block_size * args.per_device_train_batch_size * args.gradient_accumulation_steps
-        self.total_tokens += step_tokens
-        elapsed = time.time() - self.start_time
-        toks_per_sec = self.total_tokens / elapsed if elapsed > 0 else 0.0
-        logs["throughput/tokens_per_sec"] = toks_per_sec
-        logs["throughput/elapsed_min"] = elapsed / 60.0
+        if state.is_local_process_zero:
+            os.makedirs(self.log_dir, exist_ok=True)
+            self.tb_writer = SummaryWriter(log_dir=self.log_dir)
         return control
 
-trainer.add_callback(ThroughputCallback())
+    def on_step_end(self, args, state, control, **kwargs):
+        now = time.time()
+        elapsed = now - self.last_time
+        step_diff = state.global_step - self.last_step
+        self.last_time = now
+        self.last_step = state.global_step
+
+        # compute throughput
+        step_tokens = (
+            self.block_size
+            * args.per_device_train_batch_size
+            * args.gradient_accumulation_steps
+            * step_diff
+        )
+        self.total_tokens += step_tokens
+
+        toks_per_sec = step_tokens / elapsed if elapsed > 0 else 0.0
+        ex_per_sec = (
+            args.per_device_train_batch_size * args.gradient_accumulation_steps * step_diff
+        ) / elapsed if elapsed > 0 else 0.0
+        elapsed_min = (now - self.start_time) / 60.0
+
+        # console output every logging interval
+        if state.is_local_process_zero and state.global_step % args.logging_steps == 0:
+            print(
+                f"[Step {state.global_step:>6}] "
+                f"{toks_per_sec:>9.0f} tok/s | {ex_per_sec:>6.1f} ex/s | "
+                f"elapsed {elapsed_min:5.1f} min"
+            )
+
+        # tensorboard logging
+        if self.tb_writer and state.is_local_process_zero:
+            self.tb_writer.add_scalar("throughput/tokens_per_sec", toks_per_sec, state.global_step)
+            self.tb_writer.add_scalar("throughput/examples_per_sec", ex_per_sec, state.global_step)
+            self.tb_writer.add_scalar("throughput/elapsed_min", elapsed_min, state.global_step)
+
+        return control
+
+    def on_train_end(self, args, state, control, **kwargs):
+        if self.tb_writer:
+            self.tb_writer.close()
+        return control
+
+
+trainer.add_callback(ThroughputCallback(cfg["context_length"], log_dir="logs/tensorboard"))
 
 
 class GradNormCallback(TrainerCallback):
@@ -277,47 +362,33 @@ trainer.add_callback(GradNormCallback())  # optional
 
 
 class SampleGenCallback(TrainerCallback):
-    def on_evaluate(self, args, state, control, model=None, tokenizer=None, **kwargs):
+    def __init__(self, tokenizer):
+        self.tokenizer = tokenizer
+
+    def on_evaluate(self, args, state, control, model=None, **kwargs):
         prompt = "In the quiet heart of Mechanus,"
-        input_ids = tokenizer(prompt, return_tensors="pt").to(model.device)
+        input_ids = self.tokenizer(prompt, return_tensors="pt").to(model.device)
         out = model.generate(**input_ids, max_length=100, do_sample=True, temperature=0.8)
-        text = tokenizer.decode(out[0], skip_special_tokens=True)
+        text = self.tokenizer.decode(out[0], skip_special_tokens=True)
         log_file = os.path.join(args.output_dir, f"sample_step{state.global_step}.txt")
         with open(log_file, "w") as f:
             f.write(text)
-        print(f"[SampleGen] Wrote sample_step{state.global_step}.txt")
+        print(f"[SampleGen] wrote sample_step{state.global_step}.txt")
         return control
 
-trainer.add_callback(SampleGenCallback())  # optional
 
-import pynvml
-pynvml.nvmlInit()
-handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-def gpu_stats():
-    info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-    util = pynvml.nvmlDeviceGetUtilizationRates(handle)
-    print(f"[GPU] {info.used/1e9:.1f} GB / {info.total/1e9:.1f} GB  |  {util.gpu}% util")
-
-trainer.add_callback(gpu_stats())  # optional
-
+trainer.add_callback(SampleGenCallback(tok))  # optional
 
 # --------------------------------------------------------------------------------------
 # Training Main Init
 # --------------------------------------------------------------------------------------
 
-trainer = Trainer(
-    model=model,
-    args=args,
-    train_dataset=train_ds,
-    eval_dataset=eval_ds,
-    data_collator=collator,
-)
 
 
 from datetime import datetime
 
 if __name__ == "__main__":
-    trainer.train(resume_from_checkpoint=True)
+    trainer.train()
     # Save final artifacts
     tok.save_pretrained("checkpoints/sparknet-70m-v1")
     model.save_pretrained("checkpoints/sparknet-70m-v1")
