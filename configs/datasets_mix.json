@@ -1,11 +1,11 @@
 {
-  "mix": [
-    {"name": "codelion/wiki-english", "prob": 0.45},
-    {"name": "codelion/books-en", "prob": 0.25},
-    {"name": "codelion/stackexchange", "prob": 0.15},
-    {"name": "codelion/github-code", "prob": 0.10},
-    {"name": "diener/creative-notes", "prob": 0.05}
-  ],
   "seed": 42,
-  "context_length": 1024
+  "context_length": 1024,
+  "target_tokens": 200000000,
+  "mix": [
+    {"name": "codelion/finepdfs-1B", "split": "train", "prob": 0.50},
+    {"name": "mlfoundations/dclm-baseline-1.0-parquet", "split": "train", "prob": 0.30},
+    {"name": "HuggingFaceFW/fineweb-edu", "split": "train", "prob": 0.1997},
+    {"name": "json", "data_files": {"train": "data/diener_blog.jsonl"}, "prob": 0.0003}
+  ]
 }
