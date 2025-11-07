@@ -24,6 +24,9 @@ os.environ["HF_DATASETS_OFFLINE"] = "0"  # allow hub access
 torch.backends.cuda.matmul.allow_tf32 = True  # safe perf boost
 torch.backends.cudnn.allow_tf32 = True
 
+# Run Configuration
+RUN_NAME = "sparknet-70m-v1-1bil"
+
 # --------------------------------------------------------------------------------------
 # Load Config
 # --------------------------------------------------------------------------------------
@@ -35,7 +38,7 @@ random.seed(seed)
 torch.manual_seed(seed)
 
 block_size = int(cfg.get("context_length", 1024))
-target_tokens = int(cfg.get("target_tokens", 200_000_000))  # training budget
+target_tokens = int(cfg.get("target_tokens", 1_000_000_000))  # training budget
 
 # --------------------------------------------------------------------------------------
 # Tokenizer
@@ -209,8 +212,8 @@ eval_ds = build_eval_dataset(block_size)
 model_cfg = GPT2Config(
     vocab_size=len(tok),
     n_positions=block_size,
-    n_embd=512,   # 70M-ish class
-    n_layer=8,
+    n_embd=512,
+    n_layer=12,
     n_head=8,
 )
 model = AutoModelForCausalLM.from_config(model_cfg)
@@ -238,26 +241,26 @@ print(f"[Budget] target_tokens={target_tokens:,} | tokens/step={tokens_per_step:
 collator = DataCollatorForLanguageModeling(tokenizer=tok, mlm=False)
 
 args = TrainingArguments(
-    output_dir="checkpoints/sparknet-70m-v1",
-    bf16=True,  # Grace-Blackwell: yes
+    output_dir=f"checkpoints/{RUN_NAME}",
+    bf16=True, 
     per_device_train_batch_size=per_device_train_batch_size,
     gradient_accumulation_steps=gradient_accumulation_steps,
-    learning_rate=1.5e-4,          # slightly gentler for 70M
+    learning_rate=1.5e-4,          
     weight_decay=0.01,
-    warmup_ratio=0.01,
+    warmup_ratio=0.02,
     lr_scheduler_type="cosine",
     max_steps=max_steps,
-    logging_dir="logs/tensorboard",   # fresh run dir
-    logging_steps=50,
+    logging_dir=f"logs/{RUN_NAME}",
+    logging_steps=100,
     eval_strategy="steps",
-    eval_steps=2000,              # chart eval loss every 500 steps
-    save_steps=5000,
+    eval_steps=5000,              
+    save_steps=10000,
     save_strategy="steps",
     optim="adamw_torch_fused",
     save_total_limit=3,
     report_to=["tensorboard"],
     remove_unused_columns=False,
-    dataloader_num_workers=2,
+    dataloader_num_workers=8,
 )
 
 # --------------------------------------------------------------------------------------
@@ -347,7 +350,7 @@ class ThroughputCallback(TrainerCallback):
         return control
 
 
-trainer.add_callback(ThroughputCallback(cfg["context_length"], log_dir="logs/tensorboard"))
+trainer.add_callback(ThroughputCallback(cfg["context_length"], log_dir=f"logs/{RUN_NAME}"))
 
 
 class GradNormCallback(TrainerCallback):
@@ -383,6 +386,9 @@ trainer.add_callback(SampleGenCallback(tok))  # optional
 # Training Main Init
 # --------------------------------------------------------------------------------------
 
+# Validate output dirs exist
+os.makedirs(f"checkpoints/{RUN_NAME}", exist_ok=True)
+os.makedirs(f"logs/{RUN_NAME}", exist_ok=True)
 
 
 from datetime import datetime
@@ -390,21 +396,21 @@ from datetime import datetime
 if __name__ == "__main__":
     trainer.train()
     # Save final artifacts
-    tok.save_pretrained("checkpoints/sparknet-70m-v1")
-    model.save_pretrained("checkpoints/sparknet-70m-v1")
+    tok.save_pretrained(f"checkpoints/{run_name}")
+    model.save_pretrained(f"checkpoints/{run_name}")
 
     # Save model metadata
     metadata = {
-        "run_name": "sparknet-70m-v1",
+        "run_name": RUN_NAME,
         "timestamp": datetime.now().isoformat(),
         "params": {
-            "n_embd": 512, "n_layer": 8, "n_head": 8,
+            "n_embd": model_cfg.n_embd, "n_layer": model_cfg.n_layer, "n_head": model_cfg.n_head,
             "context_length": block_size, "token_budget": target_tokens
         },
         "datasets": [m["name"] for m in cfg["mix"]],
         "notes": "First full v1 run; matches Codelion 70M recipe with small blog inclusion."
     }
-    with open("checkpoints/sparknet-70m-v1/training_metadata.json", "w") as f:
+    with open(f"checkpoints/{RUN_NAME}/training_metadata.json", "w") as f:
         json.dump(metadata, f, indent=2)
 
 
