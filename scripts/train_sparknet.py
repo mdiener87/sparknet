@@ -396,8 +396,8 @@ from datetime import datetime
 if __name__ == "__main__":
     trainer.train()
     # Save final artifacts
-    tok.save_pretrained(f"checkpoints/{run_name}")
-    model.save_pretrained(f"checkpoints/{run_name}")
+    tok.save_pretrained(f"checkpoints/{RUN_NAME}")
+    model.save_pretrained(f"checkpoints/{RUN_NAME}")
 
     # Save model metadata
     metadata = {
