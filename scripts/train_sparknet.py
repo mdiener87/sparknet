@@ -3,6 +3,7 @@ import os
 import json
 import math
 import random
+import warnings
 from typing import Dict, Any, Iterable
 
 import torch
@@ -21,11 +22,18 @@ from transformers import (
 # --------------------------------------------------------------------------------------
 os.environ["HF_DATASETS_CACHE"] = os.path.expanduser("~/projects/sparknet/cache")
 os.environ["HF_DATASETS_OFFLINE"] = "0"  # allow hub access
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 torch.backends.cuda.matmul.allow_tf32 = True  # safe perf boost
 torch.backends.cudnn.allow_tf32 = True
 
+# General warning cleanup
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+
+
 # Run Configuration
-RUN_NAME = "sparknet-70m-v1-1bil"
+RUN_NAME = "sparknet-70m-v2"
 
 # --------------------------------------------------------------------------------------
 # Load Config
@@ -215,6 +223,7 @@ model_cfg = GPT2Config(
     n_embd=512,
     n_layer=12,
     n_head=8,
+    tie_word_embeddings=True
 )
 model = AutoModelForCausalLM.from_config(model_cfg)
 
@@ -226,11 +235,20 @@ model.gradient_checkpointing_disable()
 #     except Exception as _:
 #         pass
 
+model.config.use_cache = False
+model.config.attn_implementation = "sdpa"
+
+if hasattr(torch.backends.cuda, "sdp_kernel"):
+    torch.backends.cuda.sdp_kernel(
+        enable_flash=True, enable_mem_efficient=True, enable_math=False
+    )
+    print("Flash Attention enabled")
+
 # --------------------------------------------------------------------------------------
 # TrainingArguments
 # - Compute max_steps from token budget so mixture probabilities map to token shares
 # --------------------------------------------------------------------------------------
-per_device_train_batch_size = 16
+per_device_train_batch_size = 32
 gradient_accumulation_steps = 2
 
 tokens_per_step = block_size * per_device_train_batch_size * gradient_accumulation_steps
@@ -245,9 +263,9 @@ args = TrainingArguments(
     bf16=True, 
     per_device_train_batch_size=per_device_train_batch_size,
     gradient_accumulation_steps=gradient_accumulation_steps,
-    learning_rate=1.5e-4,          
+    learning_rate=3e-4,          
     weight_decay=0.01,
-    warmup_ratio=0.02,
+    warmup_ratio=0.06,
     lr_scheduler_type="cosine",
     max_steps=max_steps,
     logging_dir=f"logs/{RUN_NAME}",
@@ -260,7 +278,10 @@ args = TrainingArguments(
     save_total_limit=3,
     report_to=["tensorboard"],
     remove_unused_columns=False,
-    dataloader_num_workers=8,
+    dataloader_num_workers=16,
+    dataloader_pin_memory=True,
+    dataloader_persistent_workers=True,
+    dataloader_prefetch_factor=4,
 )
 
 # --------------------------------------------------------------------------------------
@@ -280,20 +301,42 @@ from transformers import TrainerCallback
 import time, os
 from torch.utils.tensorboard import SummaryWriter
 
+
+class SharedSummaryWriter:
+    """Lazily initializes a single SummaryWriter per run and shares it between callbacks."""
+
+    def __init__(self, log_dir: str):
+        self.log_dir = log_dir
+        self._writer = None
+
+    def get(self):
+        if self._writer is None:
+            os.makedirs(self.log_dir, exist_ok=True)
+            self._writer = SummaryWriter(log_dir=self.log_dir)
+        return self._writer
+
+    def close(self):
+        if self._writer is not None:
+            self._writer.close()
+            self._writer = None
+
+
+shared_tb_writer = SharedSummaryWriter(log_dir=f"logs/{RUN_NAME}")
+
 class ThroughputCallback(TrainerCallback):
     """
     Logs throughput metrics (tokens/sec, examples/sec, elapsed minutes)
     to both console and TensorBoard without interfering with Trainer control flow.
     """
 
-    def __init__(self, block_size, log_dir=None):
+    def __init__(self, block_size, writer_manager):
         self.block_size = block_size
         self.start_time = None
         self.last_time = None
         self.last_step = 0
         self.total_tokens = 0
         self.tb_writer = None
-        self.log_dir = log_dir or os.path.join("logs", "tensorboard")
+        self.writer_manager = writer_manager
 
     def on_train_begin(self, args, state, control, **kwargs):
         # initialize timers and tensorboard writer
@@ -301,9 +344,7 @@ class ThroughputCallback(TrainerCallback):
         self.last_time = self.start_time
         self.last_step = 0
         self.total_tokens = 0
-        if state.is_local_process_zero:
-            os.makedirs(self.log_dir, exist_ok=True)
-            self.tb_writer = SummaryWriter(log_dir=self.log_dir)
+        self.tb_writer = self.writer_manager.get() if state.is_local_process_zero else None
         return control
 
     def on_step_end(self, args, state, control, **kwargs):
@@ -345,12 +386,13 @@ class ThroughputCallback(TrainerCallback):
         return control
 
     def on_train_end(self, args, state, control, **kwargs):
-        if self.tb_writer:
-            self.tb_writer.close()
         return control
 
 
-trainer.add_callback(ThroughputCallback(cfg["context_length"], log_dir=f"logs/{RUN_NAME}"))
+trainer.add_callback(ThroughputCallback(
+    cfg["context_length"],
+    writer_manager=shared_tb_writer
+))
 
 
 class GradNormCallback(TrainerCallback):
@@ -382,6 +424,130 @@ class SampleGenCallback(TrainerCallback):
 
 trainer.add_callback(SampleGenCallback(tok))  # optional
 
+
+class TrainingMetricsCallback(TrainerCallback):
+    """
+    Combines throughput, gradient norm, and true loss/perplexity logging.
+    Writes all metrics to TensorBoard and prints consolidated console output.
+    """
+
+    def __init__(self, block_size, writer_manager):
+        self.block_size = block_size
+        self.start_time = None
+        self.last_time = None
+        self.last_step = 0
+        self.total_tokens = 0
+        self.tb_writer = None
+        self.writer_manager = writer_manager
+
+    # --- Initialization ---
+    def on_train_begin(self, args, state, control, **kwargs):
+        self.start_time = time.time()
+        self.last_time = self.start_time
+        self.last_step = 0
+        self.total_tokens = 0
+        self.tb_writer = self.writer_manager.get() if state.is_local_process_zero else None
+        return control
+
+    # --- Step-level throughput logging ---
+    def on_step_end(self, args, state, control, **kwargs):
+        now = time.time()
+        elapsed = now - self.last_time
+        step_diff = state.global_step - self.last_step
+        self.last_time = now
+        self.last_step = state.global_step
+
+        step_tokens = (
+            self.block_size
+            * args.per_device_train_batch_size
+            * args.gradient_accumulation_steps
+            * step_diff
+        )
+        self.total_tokens += step_tokens
+
+        toks_per_sec = step_tokens / elapsed if elapsed > 0 else 0.0
+        ex_per_sec = (
+            args.per_device_train_batch_size
+            * args.gradient_accumulation_steps
+            * step_diff
+        ) / elapsed if elapsed > 0 else 0.0
+        elapsed_min = (now - self.start_time) / 60.0
+
+        # TensorBoard logging
+        if self.tb_writer and state.is_local_process_zero:
+            self.tb_writer.add_scalar("throughput/tokens_per_sec", toks_per_sec, state.global_step)
+            self.tb_writer.add_scalar("throughput/examples_per_sec", ex_per_sec, state.global_step)
+            self.tb_writer.add_scalar("throughput/elapsed_min", elapsed_min, state.global_step)
+
+        # Console summary every logging interval
+        if state.is_local_process_zero and state.global_step % args.logging_steps == 0:
+            print(
+                f"[Step {state.global_step:>6}] "
+                f"{toks_per_sec:>8.0f} tok/s | "
+                f"{ex_per_sec:>6.1f} ex/s | "
+                f"elapsed {elapsed_min:5.1f} min"
+            )
+
+        return control
+
+    # --- Log grad norm + training loss / perplexity ---
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if not (logs and self.tb_writer):
+            return control
+
+        step = state.global_step
+        grad_norm = logs.get("grad_norm")
+        train_loss = logs.get("loss")
+
+        if grad_norm is not None:
+            self.tb_writer.add_scalar("grad/grad_norm", grad_norm, step)
+
+        if train_loss is not None:
+            try:
+                train_ppl = math.exp(train_loss)
+            except OverflowError:
+                train_ppl = float("inf")
+
+            self.tb_writer.add_scalar("train/loss", train_loss, step)
+            self.tb_writer.add_scalar("train/perplexity", train_ppl, step)
+
+            if step % 5000 == 0:
+                print(f"   ↳ train loss={train_loss:.4f} | ppl={train_ppl:,.1f}")
+
+        return control
+
+    # --- Evaluation loss + perplexity ---
+    def on_evaluate(self, args, state, control, metrics=None, **kwargs):
+        if not (metrics and self.tb_writer):
+            return control
+
+        step = state.global_step
+        eval_loss = metrics.get("eval_loss")
+        if eval_loss is not None:
+            try:
+                eval_ppl = math.exp(eval_loss)
+            except OverflowError:
+                eval_ppl = float("inf")
+
+            self.tb_writer.add_scalar("eval/loss", eval_loss, step)
+            self.tb_writer.add_scalar("eval/perplexity", eval_ppl, step)
+
+            # Console summary
+            print(f"[Eval] step={step:,} | loss={eval_loss:.4f} | ppl={eval_ppl:,.1f}")
+
+        return control
+
+    # --- Cleanup ---
+    def on_train_end(self, args, state, control, **kwargs):
+        return control
+
+trainer.add_callback(TrainingMetricsCallback(
+    block_size=cfg["context_length"],
+    writer_manager=shared_tb_writer
+))
+
+
+
 # --------------------------------------------------------------------------------------
 # Training Main Init
 # --------------------------------------------------------------------------------------
@@ -398,6 +564,7 @@ if __name__ == "__main__":
     # Save final artifacts
     tok.save_pretrained(f"checkpoints/{RUN_NAME}")
     model.save_pretrained(f"checkpoints/{RUN_NAME}")
+    shared_tb_writer.close()
 
     # Save model metadata
     metadata = {
@@ -408,9 +575,7 @@ if __name__ == "__main__":
             "context_length": block_size, "token_budget": target_tokens
         },
         "datasets": [m["name"] for m in cfg["mix"]],
-        "notes": "First full v1 run; matches Codelion 70M recipe with small blog inclusion."
+        "notes": "V2 | Second full 1bil token run, featuring improved configuration and doubled learning rate."
     }
     with open(f"checkpoints/{RUN_NAME}/training_metadata.json", "w") as f:
         json.dump(metadata, f, indent=2)
-
-
