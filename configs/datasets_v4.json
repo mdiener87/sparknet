@@ -1,0 +1,29 @@
+{
+  "seed": 42,
+  "context_length": 1024,
+  "target_tokens": 2000000000,
+  "mix": [
+    {
+      "name": "codelion/finepdfs-1B",
+      "split": "train",
+      "prob": 0.50
+    },
+    {
+      "name": "codelion/dclm-baseline-1B",
+      "split": "train",
+      "prob": 0.25
+    },
+    {
+      "name": "codelion/fineweb-edu-1B",
+      "split": "train",
+      "prob": 0.2498
+    },
+    {
+      "name": "json",
+      "data_files": {
+        "train": "data/diener_blog.jsonl"
+      },
+      "prob": 0.002
+    }
+  ]
+}

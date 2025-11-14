@@ -7,8 +7,11 @@ from datetime import datetime
 # ---------------------------------------------------------
 # Config
 # ---------------------------------------------------------
-MODEL_PATH = "checkpoints/sparknet-70m-instruct-v1"  # your model
-REFERENCE_MODEL = "gpt2"                          # optional baseline
+MODEL_PATH = "checkpoints/sparknet-70m-v4"  # your model
+REFERENCE_MODELS = [
+    ("GPT-2", "gpt2"),
+    ("CodeLion GPT-2 70M", "codelion/gpt-2-70m"),
+]
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 TEMPERATURE = 0.7
@@ -16,7 +19,7 @@ TOP_P = 0.95
 TOP_K = 30
 MAX_TOKENS = 100
 SEED = 42
-OUTPUT_DIR = Path("logs")
+OUTPUT_DIR = Path("eval")
 
 # ---------------------------------------------------------
 # Load models
@@ -29,18 +32,33 @@ def load_model(path):
     return tok, model
 
 tok_spark, model_spark = load_model(MODEL_PATH)
-tok_ref, model_ref = load_model(REFERENCE_MODEL)
+
+reference_engines = []
+for label, path in REFERENCE_MODELS:
+    tok_ref, model_ref = load_model(path)
+    reference_engines.append({
+        "label": label,
+        "path": path,
+        "tok": tok_ref,
+        "model": model_ref,
+    })
 
 set_seed(SEED)
-print(f"Loaded SparkNet and reference model on {DEVICE}")
+loaded_refs = ", ".join(f"{ref['label']} ({ref['path']})" for ref in reference_engines) or "none"
+print(f"Loaded SparkNet and reference models [{loaded_refs}] on {DEVICE}")
 
 # Prep output file
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 output_file = OUTPUT_DIR / f"eval_generation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+reference_summary = (
+    "\n".join(f"  - {label}: {path}" for label, path in REFERENCE_MODELS)
+    if REFERENCE_MODELS else "  (none)"
+)
+
 run_header = (
     f"Eval run: {datetime.now().isoformat()}\n"
     f"Spark model: {MODEL_PATH}\n"
-    f"Reference model: {REFERENCE_MODEL}\n"
+    f"Reference models:\n{reference_summary}\n"
     f"Device: {DEVICE}\n"
     f"Temperature: {TEMPERATURE}, top_p: {TOP_P}, max_tokens: {MAX_TOKENS}, seed: {SEED}\n"
 )
@@ -90,14 +108,15 @@ for p in PROMPTS:
     section_lines = [f"\n=== Prompt: {p!r} ==="]
 
     spark_out = generate(p, model_spark, tok_spark)
-    ref_out   = generate(p, model_ref, tok_ref)
-
-    section_lines.append("🟡 SparkNet:")
+    section_lines.append("🟡 SparkNet (SparkNet model):")
     spark_text = indent(spark_out[len(p):].strip(), "  ")
     section_lines.append(spark_text)
-    section_lines.append("🔵 GPT-2:")
-    ref_text = indent(ref_out[len(p):].strip(), "  ")
-    section_lines.append(ref_text)
+
+    for ref in reference_engines:
+        ref_out = generate(p, ref["model"], ref["tok"])
+        section_lines.append(f"🔵 {ref['label']} ({ref['path']}):")
+        ref_text = indent(ref_out[len(p):].strip(), "  ")
+        section_lines.append(ref_text)
 
     section_block = "\n".join(section_lines)
     print(section_block)
