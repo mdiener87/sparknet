@@ -10,7 +10,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, set_seed
 # Config
 # ---------------------------------------------------------
 MODEL_CONFIGS = [
-    {"label": "SparkNet 70M v2", "path": "checkpoints/sparknet-70m-v4"},
+    {"label": "SparkNet 70M v5", "path": "checkpoints/sparknet-70m-v5"},
     {"label": "GPT-2", "path": "gpt2"},
     {"label": "CodeLion GPT-2 70M", "path": "codelion/gpt-2-70m"},
 ]
@@ -25,8 +25,9 @@ DATASET_CONFIGS = [
     },
 ]
 
-VALIDATION_SAMPLES = 2000  # number of samples per dataset
-MAX_SEQUENCE_LENGTH = 256  # truncate longer texts for efficiency
+VALIDATION_SAMPLES = 2000
+MAX_SEQUENCE_LENGTH = 256
+BATCH_SIZE = 8
 SEED = 42
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 OUTPUT_DIR = Path("eval")
@@ -37,8 +38,10 @@ OUTPUT_DIR = Path("eval")
 # ---------------------------------------------------------
 def load_model(path):
     tok = AutoTokenizer.from_pretrained(path)
+    # Ensure pad token exists (GPT2 normally doesn't have one)
     if tok.pad_token is None:
-        tok.pad_token = tok.eos_token
+        tok.pad_token = tok.eos_token  
+
     model = AutoModelForCausalLM.from_pretrained(path).to(DEVICE)
     model.eval()
     return tok, model
@@ -50,37 +53,51 @@ def prepare_dataset_samples(cfg, sample_limit, seed):
         load_args.append(cfg["dataset_config"])
 
     dataset = load_dataset(*load_args, split=cfg.get("split", "validation"))
-    if seed is not None:
-        dataset = dataset.shuffle(seed=seed)
+    dataset = dataset.shuffle(seed=seed)
 
     text_field = cfg.get("text_field", "text")
     collected = []
+
     for record in dataset:
-        text = record.get(text_field)
-        if not text:
-            continue
-        stripped = text.strip()
-        if not stripped:
-            continue
-        collected.append(stripped)
-        if sample_limit and len(collected) >= sample_limit:
+        text = record.get(text_field, "")
+        text = text.strip()
+        if text:
+            collected.append(text)
+        if len(collected) >= sample_limit:
             break
+
     return collected
 
 
 def evaluate_model_on_texts(model, tokenizer, texts):
     losses = []
-    for text in texts:
-        inputs = tokenizer(
-            text,
+    for i in range(0, len(texts), BATCH_SIZE):
+        batch = texts[i:i + BATCH_SIZE]
+
+        encoded = tokenizer(
+            batch,
             return_tensors="pt",
             truncation=True,
+            padding="max_length",
             max_length=MAX_SEQUENCE_LENGTH,
         )
-        inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
+
+        input_ids = encoded["input_ids"].to(DEVICE)
+        attention_mask = encoded["attention_mask"].to(DEVICE)
+
+        # Mask out padding tokens for labels
+        labels = input_ids.clone()
+        labels[attention_mask == 0] = -100
+
         with torch.no_grad():
-            output = model(**inputs, labels=inputs["input_ids"])
-        losses.append(output.loss.item())
+            out = model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                labels=labels
+            )
+
+        batch_loss = out.loss.detach().cpu().item()
+        losses.append(batch_loss)
 
     avg_loss = sum(losses) / len(losses)
     perplexity = math.exp(avg_loss)
@@ -98,41 +115,18 @@ def main():
     for cfg in DATASET_CONFIGS:
         samples = prepare_dataset_samples(cfg, VALIDATION_SAMPLES, SEED)
         dataset_samples[cfg["label"]] = samples
-        print(
-            f"Loaded dataset '{cfg['label']}' with {len(samples)} usable samples (limit {VALIDATION_SAMPLES})."
-        )
+        print(f"Loaded dataset '{cfg['label']}' with {len(samples)} usable samples.")
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_file = OUTPUT_DIR / f"validation_{timestamp}.txt"
 
-    header_lines = [
-        f"Validation run: {datetime.now().isoformat()}",
-        f"Device: {DEVICE}",
-        f"Max sequence length: {MAX_SEQUENCE_LENGTH}",
-        "Models:" + "".join(
-            f"\n  - {cfg['label']}: {cfg['path']}" for cfg in MODEL_CONFIGS
-        ),
-        "Datasets:" + "".join(
-            f"\n  - {cfg['label']} ({cfg['dataset_name']} / {cfg.get('dataset_config','default')} split={cfg.get('split','validation')})"
-            for cfg in DATASET_CONFIGS
-        ),
-        f"Samples per dataset: {VALIDATION_SAMPLES}",
-        "",
-    ]
-
-    results_lines = header_lines.copy()
+    results_lines = [f"Validation run: {datetime.now().isoformat()}"]
 
     for model_cfg in MODEL_CONFIGS:
-        print(f"\n=== Evaluating {model_cfg['label']} ({model_cfg['path']}) ===")
+        print(f"\n=== Evaluating {model_cfg['label']} ===")
         tokenizer, model = load_model(model_cfg["path"])
 
         for dataset_label, samples in dataset_samples.items():
-            if not samples:
-                msg = f"No samples available for dataset '{dataset_label}'. Skipping."
-                print(msg)
-                results_lines.append(msg)
-                continue
-
             avg_loss, perplexity = evaluate_model_on_texts(model, tokenizer, samples)
             line = (
                 f"Model: {model_cfg['label']} | Dataset: {dataset_label} | "
@@ -141,10 +135,10 @@ def main():
             print(line)
             results_lines.append(line)
 
-    with output_file.open("w", encoding="utf-8") as f:
+    with open(output_file, "w") as f:
         f.write("\n".join(results_lines))
 
-    print(f"\nDetailed validation results saved to {output_file}")
+    print(f"\nDetailed results saved to {output_file}")
 
 
 if __name__ == "__main__":

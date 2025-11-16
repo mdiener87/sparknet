@@ -7,7 +7,7 @@ from datetime import datetime
 # ---------------------------------------------------------
 # Config
 # ---------------------------------------------------------
-MODEL_PATH = "checkpoints/sparknet-70m-v4"  # your model
+MODEL_PATH = "checkpoints/sparknet-70m-v5"  # your model
 REFERENCE_MODELS = [
     ("GPT-2", "gpt2"),
     ("CodeLion GPT-2 70M", "codelion/gpt-2-70m"),
