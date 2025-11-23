@@ -1,5 +1,10 @@
 # SparkNet
 
+
+![sparknet](/sparknet.png)
+
+
+
 SparkNet is a from-scratch, GPT-2–style language model project that focuses on training compact (≈70M parameter) causal decoders with modern Hugging Face tooling. The repo contains everything needed to:
 
 - stream and mix public Hugging Face datasets or consume a pre-packed 1B-token corpus
