@@ -10,6 +10,10 @@ SparkNet is a from-scratch, GPT-2–style language model project that focuses on
 - launch full runs with instrumentation (TensorBoard throughput, gradient norm, periodic sample generation)
 - export checkpoints that can be reused with standard 🤗 `AutoModelForCausalLM` APIs
 
+
+Special thanks to [CodeLion](https://huggingface.co/codelion) for inspiring the **One Billion Token Challenge**, and for providing the high-quality datasets used in this training run.
+
+
 ---
 
 ## Requirements
