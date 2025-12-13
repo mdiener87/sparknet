@@ -1,11 +1,15 @@
 import os
+os.environ["HF_DATASETS_DISABLE_CACHE"] = "1"
+
 import random
 import time
 from multiprocessing import Pool, cpu_count
 from typing import Iterator, List
 
 import torch
-from datasets import Dataset, Features, Sequence, Value, load_dataset
+from datasets import Dataset, Features, Sequence, Value, load_dataset, disable_caching
+disable_caching()
+
 from transformers import LlamaTokenizer
 
 import json
@@ -88,7 +92,7 @@ def text_stream() -> Iterator[str]:
 # ---------------------------------------------------------------------
 # Sharded packed sequence generator
 # ---------------------------------------------------------------------
-def shard_generator(shard_tokens: int):
+def shard_generator(shard_tokens: int, shard_id: int):
     buffer: List[int] = []
     produced_tokens = 0
     total_seen = 0
@@ -163,7 +167,7 @@ def main():
     })
 
     ds = Dataset.from_generator(
-        lambda: shard_generator(SHARD_TOKENS),
+        lambda: shard_generator(SHARD_TOKENS, shard_id),
         features=features,
         writer_batch_size=WRITER_BATCH_SIZE,
     )
