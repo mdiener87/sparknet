@@ -1,177 +1,193 @@
+import os
 import random
 import time
 from multiprocessing import Pool, cpu_count
+from typing import Iterator, List
 
 import torch
 from datasets import Dataset, Features, Sequence, Value, load_dataset
-from transformers import AutoTokenizer
+from transformers import LlamaTokenizer
 
-TOKENIZER_DIR = "./tokenizer-v5"
-SAVE_DIR = "datasets/sparknet-v5-1b"
-TARGET_TOKENS = 1_000_000_000
+import json
+import socket
+from datetime import datetime
+
+# ---------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------
+TOKENIZER_DIR = "./tokenizer-v6"
+OUTPUT_ROOT = "datasets/sparknet-v6-pretrain"
+
 BLOCK_SIZE = 1024
-PROGRESS_TOKENS_STEP = 10_000_000
-PACKING_PROGRESS_STEPS = 20  # report roughly this many times while packing
-SAVE_WRITER_BATCH_SIZE = 50_000
+SHARD_TOKENS = 500_000_000      # tokens per shard (e.g. 500M)
+WRITER_BATCH_SIZE = 50_000
+REPORT_TOKENS_EVERY = 10_000_000
 
-# Weighted sampling just like CodeLion
 DATA_SOURCES = [
-    ("codelion/finepdfs-1B",       0.50),
-    ("codelion/dclm-baseline-1B",  0.30),
-    ("codelion/fineweb-edu-1B",    0.19),
-    ("data/diener_blog.jsonl",    0.01),
+    ("codelion/fineweb-edu-1B", 0.55),
+    ("codelion/dclm-baseline-1B", 0.25),
+    ("codelion/finepdfs-1B", 0.15),
+    ("eli5", 0.04),
+    ("data/diener_blog.jsonl", 0.01),
 ]
 
-_WORKER_TOKENIZER = None
-_WORKER_EOS_ID = None
+# ---------------------------------------------------------------------
+# Worker tokenizer
+# ---------------------------------------------------------------------
+_WORKER_TOK = None
+_WORKER_EOS = None
 
 
-def _init_worker(tokenizer_dir: str):
-    """Load tokenizer inside each worker process once."""
-    global _WORKER_TOKENIZER, _WORKER_EOS_ID
-    tok = AutoTokenizer.from_pretrained(tokenizer_dir)
-    _WORKER_TOKENIZER = tok
-    _WORKER_EOS_ID = tok.eos_token_id
+def _init_worker():
+    global _WORKER_TOK, _WORKER_EOS
+    tok = LlamaTokenizer.from_pretrained(TOKENIZER_DIR)
+    _WORKER_TOK = tok
+    _WORKER_EOS = tok.eos_token_id
 
 
-def _tokenize_text(text: str):
-    """Return token ids (plus EOS) for a single text sample."""
-    if _WORKER_TOKENIZER is None or not isinstance(text, str):
+def _tokenize(text: str) -> List[int] | None:
+    if not isinstance(text, str):
         return None
-
-    ids = _WORKER_TOKENIZER(text, add_special_tokens=False)["input_ids"]
+    ids = _WORKER_TOK(text, add_special_tokens=False)["input_ids"]
     if not ids:
         return None
-
-    ids.append(_WORKER_EOS_ID)
+    ids.append(_WORKER_EOS)
     return ids
 
 
-def text_stream():
-    """Infinite generator producing text samples based on weighted sampling."""
+# ---------------------------------------------------------------------
+# Text stream
+# ---------------------------------------------------------------------
+def text_stream() -> Iterator[str]:
     while True:
-        name = random.choices(
-            [src for src, _ in DATA_SOURCES],
-            weights=[w for _, w in DATA_SOURCES]
+        src = random.choices(
+            [s for s, _ in DATA_SOURCES],
+            weights=[w for _, w in DATA_SOURCES],
         )[0]
 
-        ds = load_dataset(name, split="train", streaming=True)
+        if src == "eli5":
+            ds = load_dataset("eli5", split="train", streaming=True)
+            for row in ds:
+                yield row["question"]
+                yield row["answer"]
 
-        for row in ds:
-            if "text" in row and isinstance(row["text"], str):
-                yield row["text"]
-            else:
-                # fallback: any string-like field
-                for value in row.values():
-                    if isinstance(value, str):
-                        yield value
+        elif src.endswith(".jsonl"):
+            ds = load_dataset("json", data_files=src, split="train", streaming=True)
+            for row in ds:
+                for v in row.values():
+                    if isinstance(v, str):
+                        yield v
+
+        else:
+            ds = load_dataset(src, split="train", streaming=True)
+            for row in ds:
+                if "text" in row:
+                    yield row["text"]
 
 
-def accumulate_tokens():
-    """Tokenize stream samples in parallel until TARGET_TOKENS is reached."""
-    raw_tokens = []
-    total = 0
-    next_report = PROGRESS_TOKENS_STEP
-    start_time = time.perf_counter()
+# ---------------------------------------------------------------------
+# Sharded packed sequence generator
+# ---------------------------------------------------------------------
+def shard_generator(shard_tokens: int):
+    buffer: List[int] = []
+    produced_tokens = 0
+    total_seen = 0
+    next_report = REPORT_TOKENS_EVERY
+    start = time.perf_counter()
+
+    num_workers = max(1, cpu_count() - 1)
+    pool = Pool(num_workers, initializer=_init_worker)
     stream = text_stream()
 
-    num_workers = max(1, (cpu_count() or 1) - 1)
-    print(f"Beginning token accumulation with {num_workers} workers…")
-
-    pool = Pool(
-        processes=num_workers,
-        initializer=_init_worker,
-        initargs=(TOKENIZER_DIR,)
-    )
-    iterator = pool.imap_unordered(_tokenize_text, stream, chunksize=8)
-
     try:
-        for ids in iterator:
+        for ids in pool.imap_unordered(_tokenize, stream, chunksize=8):
             if not ids:
                 continue
 
-            raw_tokens.extend(ids)
-            total += len(ids)
+            buffer.extend(ids)
+            total_seen += len(ids)
 
-            if total >= next_report:
-                elapsed = max(1e-6, time.perf_counter() - start_time)
-                rate = total / elapsed
-                pct = min(100.0, (total / TARGET_TOKENS) * 100)
+            while len(buffer) >= BLOCK_SIZE:
+                chunk = buffer[:BLOCK_SIZE]
+                buffer = buffer[BLOCK_SIZE:]
+
+                produced_tokens += BLOCK_SIZE
+                yield {
+                    "input_ids": chunk,
+                    "labels": chunk.copy(),
+                    "attention_mask": [1] * BLOCK_SIZE,
+                }
+
+                if produced_tokens >= shard_tokens:
+                    return
+
+            if total_seen >= next_report:
+                elapsed = time.perf_counter() - start
+                rate = total_seen / max(1e-6, elapsed)
                 print(
-                    f"Tokenized {total:,}/{TARGET_TOKENS:,} tokens "
-                    f"({pct:.2f}%) at ~{rate:,.0f} tok/s"
+                    f"Seen {total_seen:,} tokens | "
+                    f"Emitted {produced_tokens:,}/{shard_tokens:,} | "
+                    f"{rate:,.0f} tok/s"
                 )
-                next_report += PROGRESS_TOKENS_STEP
+                next_report += REPORT_TOKENS_EVERY
 
-            if total >= TARGET_TOKENS:
-                print(f"Reached target: {total:,} tokens.")
-                break
     finally:
         pool.terminate()
         pool.join()
 
-    return raw_tokens
 
-
-def pack_sequences(raw_tokens):
-    """Yield packed sequences to avoid holding the entire dataset in RAM."""
-    print("Packing into 1024-token sequences…")
-    total_sequences = max(0, len(raw_tokens) // BLOCK_SIZE)
-    report_every = max(1, total_sequences // PACKING_PROGRESS_STEPS) if total_sequences else 0
-
-    def generator():
-        packed = 0
-        for i in range(0, len(raw_tokens) - BLOCK_SIZE + 1, BLOCK_SIZE):
-            chunk = raw_tokens[i:i + BLOCK_SIZE]
-            if len(chunk) < BLOCK_SIZE:
-                break
-
-            packed += 1
-            if report_every and packed % report_every == 0:
-                pct = (packed / total_sequences) * 100 if total_sequences else 100.0
-                print(f"Packed {packed:,}/{total_sequences:,} sequences ({pct:.1f}%).")
-
-            yield {
-                "input_ids": chunk,
-                "labels": chunk.copy(),
-                "attention_mask": [1] * BLOCK_SIZE
-            }
-
-        print(f"Created {packed:,} sequences of block size {BLOCK_SIZE}.")
-
-    return generator
-
-
-def save_dataset_chunked(generator_fn):
-    """Stream packed sequences to disk using smaller writer batches."""
-    print("Saving dataset with chunked writer…")
-    features = Features({
-        "input_ids": Sequence(Value("int32")),
-        "labels": Sequence(Value("int32")),
-        "attention_mask": Sequence(Value("int8"))
-    })
-    ds = Dataset.from_generator(
-        generator_fn,
-        features=features,
-        writer_batch_size=SAVE_WRITER_BATCH_SIZE
-    )
-    ds.save_to_disk(SAVE_DIR)
-    print(f"Dataset saved to: {SAVE_DIR}/")
-
-
+# ---------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------
 def main():
     random.seed(42)
     torch.manual_seed(42)
 
-    print("Loading tokenizer…")
-    tok = AutoTokenizer.from_pretrained(TOKENIZER_DIR)
-    print(f"Tokenizer vocab size: {len(tok)} | EOS id: {tok.eos_token_id}")
+    os.makedirs(OUTPUT_ROOT, exist_ok=True)
 
-    raw_tokens = accumulate_tokens()
-    sequence_generator = pack_sequences(raw_tokens)
-    save_dataset_chunked(sequence_generator)
+    existing = sorted(
+        d for d in os.listdir(OUTPUT_ROOT) if d.startswith("shard-")
+    )
+    shard_id = len(existing)
 
-    print("Done.")
+    shard_dir = os.path.join(OUTPUT_ROOT, f"shard-{shard_id:03d}")
+    os.makedirs(shard_dir, exist_ok=False)
+
+    print(f"Building shard {shard_id:03d} → {shard_dir}")
+    print(f"Target tokens: {SHARD_TOKENS:,}")
+
+    features = Features({
+        "input_ids": Sequence(Value("int32")),
+        "labels": Sequence(Value("int32")),
+        "attention_mask": Sequence(Value("int8")),
+    })
+
+    ds = Dataset.from_generator(
+        lambda: shard_generator(SHARD_TOKENS),
+        features=features,
+        writer_batch_size=WRITER_BATCH_SIZE,
+    )
+    ds.save_to_disk(shard_dir)
+
+    metadata = {
+        "shard_id": shard_id,
+        "tokenizer": "sparknet-v6",
+        "tokenizer_path": TOKENIZER_DIR,
+        "block_size": BLOCK_SIZE,
+        "target_tokens": SHARD_TOKENS,
+        "data_sources": [
+            {"name": name, "weight": weight}
+            for name, weight in DATA_SOURCES
+        ],
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "hostname": socket.gethostname(),
+    }
+
+    with open(os.path.join(shard_dir, "metadata.json"), "w") as f:
+        json.dump(metadata, f, indent=2)
+
+    print(f"Shard {shard_id:03d} complete")
+
 
 
 if __name__ == "__main__":
