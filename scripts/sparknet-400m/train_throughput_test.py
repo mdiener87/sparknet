@@ -27,8 +27,11 @@ from transformers import (
 # -----------------------------
 @dataclass
 class RunConfig:
-    run_name: str = "sparknet-400m-v1"
+    run_name: str = "sparknet-400m-prodsmoke"
     seed: int = 42
+
+    gradient_checkpointing: bool = True
+    do_eval: bool = True
 
     tokenizer_path: str = "./tokenizer-v6"
     train_root: str = "datasets/sparknet-v6-pretrain"
@@ -46,8 +49,8 @@ class RunConfig:
 
     # Training
     bf16: bool = True
-    per_device_train_batch_size: int = 32
-    grad_accum: int = 16
+    per_device_train_batch_size: int = 8
+    grad_accum: int = 64
 
     learning_rate: float = 2e-4
     weight_decay: float = 0.1
@@ -56,7 +59,7 @@ class RunConfig:
     max_grad_norm: float = 1.0
 
     # Token budget (production)
-    target_tokens: int = 6_000_000_000  # set to 4B/6B/8B as you like
+    target_tokens: int = 80_000_000  # set to 4B/6B/8B as you like
 
     # I/O + cadence
     logging_steps: int = 50
@@ -161,7 +164,7 @@ def find_latest_checkpoint(output_dir: str) -> Optional[str]:
 # Callbacks
 # -----------------------------
 class PerfCallback(TrainerCallback):
-    def __init__(self, tokens_per_step: int):
+    def __init__(self, tokens_per_step: int): 
         self.tokens_per_step = tokens_per_step
         self.t0 = None
 
@@ -181,6 +184,8 @@ class PerfCallback(TrainerCallback):
         logs = logs or {}
         if "loss" in logs:
             print(f"[Perf] ~{tok_per_s:,.0f} tok/s | step={state.global_step:,}")
+        logs["tokens_per_second"] = tok_per_s
+
 
 class SampleGenCallback(TrainerCallback):
     def __init__(self, tok, prompts: List[str], every_eval: bool = True):
@@ -216,20 +221,31 @@ class SampleGenCallback(TrainerCallback):
 # -----------------------------
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default=None, help="Optional path to a json config override.")
-    parser.add_argument("--resume", type=str, default=None, help='Checkpoint path or "latest". Overrides config.resume_from.')
+    parser.add_argument("--run-name", type=str, help="Override run name")
+    parser.add_argument("--batch-size", type=int, help="Per-device train batch size")
+    parser.add_argument("--grad-accum", type=int, help="Gradient accumulation steps")
+    parser.add_argument("--no-grad-checkpointing", action="store_true", help="Disable gradient checkpointing")
+    parser.add_argument("--target-tokens", type=int, help="Override target token budget")
+    parser.add_argument("--no-eval", action="store_true", help="Disable evaluation")
+    parser.add_argument("--config", type=str, default=None)
+    parser.add_argument("--resume", type=str, default=None)
     args_cli = parser.parse_args()
 
+
     cfg = RunConfig()
-    if args_cli.config:
-        with open(args_cli.config, "r") as f:
-            overrides = json.load(f)
-        for k, v in overrides.items():
-            if not hasattr(cfg, k):
-                raise ValueError(f"Unknown config field: {k}")
-            setattr(cfg, k, v)
-    if args_cli.resume:
-        cfg.resume_from = args_cli.resume
+    if args_cli.run_name:
+        cfg.run_name = args_cli.run_name
+    if args_cli.batch_size:
+        cfg.per_device_train_batch_size = args_cli.batch_size
+    if args_cli.grad_accum:
+        cfg.grad_accum = args_cli.grad_accum
+    if args_cli.no_grad_checkpointing:
+        cfg.gradient_checkpointing = False
+    if args_cli.target_tokens:
+        cfg.target_tokens = args_cli.target_tokens
+    if args_cli.no_eval:
+        cfg.do_eval = False
+    
 
     # Environment
     os.environ["HF_DATASETS_CACHE"] = os.path.expanduser("~/projects/sparknet/cache")
@@ -271,7 +287,10 @@ def main():
     )
     model = AutoModelForCausalLM.from_config(model_cfg)
     model.config.use_cache = False
-    model.gradient_checkpointing_disable()
+    if cfg.gradient_checkpointing:
+        model.gradient_checkpointing_enable()
+    else:
+        model.gradient_checkpointing_disable()
     model.config.attn_implementation = "sdpa"
 
     if hasattr(torch.backends.cuda, "sdp_kernel"):
@@ -302,10 +321,10 @@ def main():
         logging_dir=log_dir,
         logging_steps=cfg.logging_steps,
 
-        eval_strategy="steps",
-        eval_steps=cfg.eval_steps,
+        eval_strategy = "steps" if cfg.do_eval else "no",
+        eval_steps = cfg.eval_steps if cfg.do_eval else None,
+        save_strategy = "steps" if cfg.do_eval else "no",
 
-        save_strategy="steps",
         save_steps=cfg.save_steps,
         save_total_limit=cfg.save_total_limit,
 
@@ -336,7 +355,7 @@ def main():
             prompts = json.load(f)
 
     callbacks = [PerfCallback(tokens_per_step)]
-    if cfg.do_sample_generations:
+    if cfg.do_eval and cfg.do_sample_generations:
         callbacks.append(SampleGenCallback(tok, prompts, every_eval=cfg.sample_gen_every_eval))
 
     trainer = Trainer(
