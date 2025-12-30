@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-RUN_NAME="sparknet-400m-v1"
+RUN_NAME="sparknet-400m-v1-resumed"
 
 LOG_DIR="$PROJECT_ROOT/logs/$RUN_NAME"
 mkdir -p "$LOG_DIR"
@@ -30,6 +30,7 @@ echo "======================================"
 
 # Launch training
 python "$PROJECT_ROOT/scripts/sparknet-400m/train_pretrain.py" \
+    --resume "latest" \
   | tee "$LOG_DIR/train.log"
 
 echo "======================================"

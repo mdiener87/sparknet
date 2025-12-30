@@ -18,6 +18,7 @@ except ImportError as exc:  # pragma: no cover - guidance for missing dependency
 # ---------------------------------------------------------
 MODEL_CONFIGS = [
     {"label": "SparkNet 70M v5", "path": "checkpoints/sparknet-70m-v5"},
+    {"label": "SparkNet 70M v5", "path": "checkpoints/sparknet-400m-v1"},
     {"label": "GPT-2", "path": "gpt2"},
     {"label": "CodeLion GPT-2 70M", "path": "codelion/gpt-2-70m"},
 ]

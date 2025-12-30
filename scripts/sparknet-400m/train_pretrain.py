@@ -218,6 +218,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default=None, help="Optional path to a json config override.")
     parser.add_argument("--resume", type=str, default=None, help='Checkpoint path or "latest". Overrides config.resume_from.')
+    parser.add_argument("--run-name", type=str, default=None, help="Override cfg.run_name (overrides config file)")
     args_cli = parser.parse_args()
 
     cfg = RunConfig()
@@ -230,6 +231,8 @@ def main():
             setattr(cfg, k, v)
     if args_cli.resume:
         cfg.resume_from = args_cli.resume
+    if args_cli.run_name:
+        cfg.run_name = args_cli.run_name
 
     # Environment
     os.environ["HF_DATASETS_CACHE"] = os.path.expanduser("~/projects/sparknet/cache")
