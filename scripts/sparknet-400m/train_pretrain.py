@@ -1,10 +1,11 @@
 import os
+import shutil
 import json
 import math
 import time
 import random
 import argparse
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List
@@ -49,20 +50,21 @@ class RunConfig:
     per_device_train_batch_size: int = 32
     grad_accum: int = 16
 
-    learning_rate: float = 2e-4
+    learning_rate: float = 1.5e-4
     weight_decay: float = 0.1
-    warmup_ratio: float = 0.03
+    warmup_ratio: float = 0.01
     scheduler: str = "cosine"
     max_grad_norm: float = 1.0
 
     # Token budget (production)
-    target_tokens: int = 6_000_000_000  # set to 4B/6B/8B as you like
+    target_tokens: int = 10_000_000_000  # total budget for the run
+    checkpoint_tokens: List[int] = field(default_factory=lambda: [8_000_000_000])  # explicit token checkpoints
 
     # I/O + cadence
     logging_steps: int = 50
-    eval_steps: int = 250
+    eval_steps: int = 1000
     save_steps: int = 500
-    save_total_limit: int = 3
+    save_total_limit: Optional[int] = 5
 
     dataloader_num_workers: int = 16
     dataloader_prefetch_factor: int = 4
@@ -211,6 +213,35 @@ class SampleGenCallback(TrainerCallback):
                 print(f"\nPROMPT: {p}\n{text}\n")
         print("[SampleGen] =====\n")
 
+class TokenCheckpointCallback(TrainerCallback):
+    def __init__(self, target_step_map: dict):
+        self.target_step_map = dict(target_step_map)
+        self._saved_steps = set()
+
+    def on_step_end(self, args, state, control, **kwargs):
+        if not self.target_step_map:
+            return control
+        step = state.global_step
+        if step in self._saved_steps:
+            return control
+        if step in self.target_step_map:
+            self._saved_steps.add(step)
+            control.should_save = True
+        return control
+
+    def on_save(self, args, state, control, **kwargs):
+        step = state.global_step
+        if step not in self.target_step_map:
+            return control
+        token_target = self.target_step_map[step]
+        src = os.path.join(args.output_dir, f"checkpoint-{step}")
+        dst = os.path.join(args.output_dir, f"checkpoint-{token_target}-tokens")
+        if os.path.exists(dst):
+            return control
+        if os.path.isdir(src):
+            shutil.copytree(src, dst)
+        return control
+
 # -----------------------------
 # Main
 # -----------------------------
@@ -236,7 +267,7 @@ def main():
 
     # Environment
     os.environ["HF_DATASETS_CACHE"] = os.path.expanduser("~/projects/sparknet/cache")
-    os.environ["HF_DATASETS_OFFLINE"] = "0"
+    os.environ["HF_DATASETS_OFFLINE"] = "1"
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
     set_tf32(True)
@@ -285,6 +316,9 @@ def main():
     tokens_per_step = cfg.block_size * cfg.per_device_train_batch_size * cfg.grad_accum
     max_steps = math.ceil(cfg.target_tokens / tokens_per_step)
     print(f"[Budget] target_tokens={cfg.target_tokens:,} | tokens/step={tokens_per_step:,} | max_steps={max_steps:,}")
+    checkpoint_tokens = cfg.checkpoint_tokens or []
+    checkpoint_steps = [math.ceil(t / tokens_per_step) for t in checkpoint_tokens]
+    checkpoint_step_map = dict(zip(checkpoint_steps, checkpoint_tokens))
 
     # TrainingArguments
     train_args = TrainingArguments(
@@ -339,6 +373,8 @@ def main():
             prompts = json.load(f)
 
     callbacks = [PerfCallback(tokens_per_step)]
+    if checkpoint_step_map:
+        callbacks.append(TokenCheckpointCallback(checkpoint_step_map))
     if cfg.do_sample_generations:
         callbacks.append(SampleGenCallback(tok, prompts, every_eval=cfg.sample_gen_every_eval))
 
@@ -368,6 +404,8 @@ def main():
         "derived": {
             "tokens_per_step": tokens_per_step,
             "max_steps": max_steps,
+            "checkpoint_tokens": checkpoint_tokens,
+            "checkpoint_steps": checkpoint_steps,
         },
         "datasets": {
             "train_root": cfg.train_root,
