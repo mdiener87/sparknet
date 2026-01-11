@@ -16,6 +16,7 @@ datasets/
 logs/
 cache/
 eval/
+huggingface/
 *.pt
 *.bin
 
