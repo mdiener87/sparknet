@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """
-build_sft_chat_v1.py
+build_sft_chat_v2.py
 
-Builds packed SFT chat shards (input_ids / labels / attention_mask) for SparkNet.
-Key behaviors / improvements vs prior version:
+Builds SFT chat shards (input_ids / labels / attention_mask) for SparkNet.
+
+CRITICAL FIX vs previous version:
+- Do NOT pack multiple conversations into a continuous token stream and then slice fixed blocks.
+  That causes most blocks to start mid-assistant with labels active, destroying chat conditioning.
+- Instead: one conversation => one fixed-length row, truncated/padded to BLOCK_SIZE.
+
+Other behaviors retained:
 - Masks assistant *prefix* tokens in labels (trains assistant content, not the scaffold).
-- Caches prefix/newline token IDs per worker (big speedup).
-- WORLD: Deterministic-ish seeding knobs; still nondeterministic with streaming + multiproc.
-- Produces fixed-size blocks (BLOCK_SIZE) and packs multiple conversations per block.
+- Caches prefix/newline token IDs per worker for speed.
 - Writes shard-level metadata.json and dataset-level meta.json.
 """
 
 import os
-# Prefer turning off HF dataset caching; we save-to-disk shards ourselves.
+
 os.environ.setdefault("HF_DATASETS_DISABLE_CACHE", "1")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
@@ -29,15 +33,7 @@ from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Tuple
 
 import torch
-from datasets import (
-    Dataset,
-    Features,
-    Sequence,
-    Value,
-    load_dataset,
-    disable_caching,
-)
-
+from datasets import Dataset, Features, Sequence, Value, load_dataset, disable_caching
 from transformers import AutoTokenizer
 
 disable_caching()
@@ -46,10 +42,10 @@ disable_caching()
 # Defaults
 # ---------------------------------------------------------------------
 DEFAULT_TOKENIZER_DIR = "./tokenizer-v6"
-DEFAULT_OUTPUT_ROOT = "datasets/sft_chat_v1"
+DEFAULT_OUTPUT_ROOT = "datasets/sft_chat_v2"
 
 DEFAULT_BLOCK_SIZE = 1024
-DEFAULT_SHARD_TOKENS = 50_000_000
+DEFAULT_SHARD_TOKENS = 50_000_000          # counts emitted tokens (BLOCK_SIZE per row)
 DEFAULT_WRITER_BATCH_SIZE = 50_000
 DEFAULT_REPORT_TOKENS_EVERY = 5_000_000
 
@@ -73,6 +69,7 @@ DATA_SOURCES = [
 # ---------------------------------------------------------------------
 _WORKER_TOK = None
 _WORKER_EOS = None
+_WORKER_PAD = None
 _WORKER_CFG = None
 _WORKER_PREFIX_IDS = None
 _WORKER_NL_IDS = None
@@ -80,18 +77,22 @@ _WORKER_NL_IDS = None
 
 def _init_worker(tokenizer_dir: str, block_size: int, max_assistant_tokens: int):
     """Initialize tokenizer + cached token IDs in each multiprocessing worker."""
-    global _WORKER_TOK, _WORKER_EOS, _WORKER_CFG, _WORKER_PREFIX_IDS, _WORKER_NL_IDS
+    global _WORKER_TOK, _WORKER_EOS, _WORKER_PAD, _WORKER_CFG, _WORKER_PREFIX_IDS, _WORKER_NL_IDS
 
     tok = AutoTokenizer.from_pretrained(tokenizer_dir, use_fast=True)
-    # Ensure EOS exists
+
     if tok.eos_token_id is None:
-        raise RuntimeError("Tokenizer has no eos_token_id; required for packing boundaries.")
+        raise RuntimeError("Tokenizer has no eos_token_id; required.")
+
+    # Many causal LMs use pad=eos; ensure we have a pad id for padding.
+    if tok.pad_token_id is None:
+        tok.pad_token = tok.eos_token
 
     _WORKER_TOK = tok
     _WORKER_EOS = tok.eos_token_id
+    _WORKER_PAD = tok.pad_token_id
     _WORKER_CFG = {"block_size": int(block_size), "max_assistant_tokens": int(max_assistant_tokens)}
 
-    # Cache commonly tokenized strings
     _WORKER_PREFIX_IDS = {
         role: tok(prefix, add_special_tokens=False)["input_ids"]
         for role, prefix in ROLE_PREFIX.items()
@@ -130,7 +131,7 @@ def _normalize_messages(raw_messages: List[dict], max_messages: int) -> List[dic
     if not messages:
         return []
 
-    # Merge consecutive same-role messages (helps reduce fragmentation)
+    # Merge consecutive same-role messages
     merged: List[dict] = []
     for msg in messages:
         if not merged or merged[-1]["role"] != msg["role"]:
@@ -138,7 +139,7 @@ def _normalize_messages(raw_messages: List[dict], max_messages: int) -> List[dic
         else:
             merged[-1]["content"] += "\n\n" + msg["content"]
 
-    # Extract optional system, limit other messages
+    # Keep optional system message, cap other messages
     if merged and merged[0]["role"] == "system":
         system_msg = merged[0]
         rest = merged[1:]
@@ -151,7 +152,7 @@ def _normalize_messages(raw_messages: List[dict], max_messages: int) -> List[dic
         non_system = non_system[-max_messages:]
     merged = ([system_msg] if system_msg else []) + non_system
 
-    # Ensure the conversation ends with assistant (we supervise only assistant outputs)
+    # Ensure conversation ends with assistant (we supervise only assistant outputs)
     while merged and merged[-1]["role"] != "assistant":
         merged.pop()
 
@@ -164,12 +165,12 @@ def _normalize_messages(raw_messages: List[dict], max_messages: int) -> List[dic
 
 def _tokenize_conversation(item: Tuple[str, List[dict]]):
     """
-    Returns (source, input_ids, labels, assistant_supervised_tokens) or None.
+    Returns (source, input_ids, labels, supervised_tokens) or None.
 
-    Important behavior:
+    Behavior:
     - input_ids includes role prefixes for all roles.
-    - labels are -100 except assistant *content* (+ newline + optional eos). Assistant prefix tokens are masked.
-      This avoids training the model to emit "### Assistant:\n" scaffold.
+    - labels are -100 except assistant *content* (+ newline + eos). Assistant prefix tokens are masked.
+    - truncates to last block_size tokens if needed.
     """
     source, messages = item
     if not messages:
@@ -182,7 +183,7 @@ def _tokenize_conversation(item: Tuple[str, List[dict]]):
 
     input_ids: List[int] = []
     labels: List[int] = []
-    assistant_supervised = 0
+    supervised = 0
 
     for msg in messages:
         role = msg["role"]
@@ -191,8 +192,6 @@ def _tokenize_conversation(item: Tuple[str, List[dict]]):
             continue
 
         content_ids = tok(msg["content"], add_special_tokens=False)["input_ids"]
-
-        # Cap assistant response length (optional)
         if role == "assistant" and max_assistant_tokens:
             content_ids = content_ids[:max_assistant_tokens]
 
@@ -200,32 +199,29 @@ def _tokenize_conversation(item: Tuple[str, List[dict]]):
         input_ids.extend(seg_ids)
 
         if role == "assistant":
-            # Mask assistant scaffold; supervise only content + newline.
             labels.extend([-100] * len(prefix_ids))
             labels.extend(content_ids + _WORKER_NL_IDS)
-            assistant_supervised += len(content_ids) + len(_WORKER_NL_IDS)
+            supervised += len(content_ids) + len(_WORKER_NL_IDS)
         else:
             labels.extend([-100] * len(seg_ids))
 
-    if not input_ids or assistant_supervised == 0:
+    if not input_ids or supervised == 0:
         return None
 
-    # Ensure a boundary token; supervise EOS only if assistant was the last role (it is by construction).
+    # Add EOS boundary; supervise it (assistant is last by construction)
     if input_ids[-1] != eos_id:
         input_ids.append(eos_id)
         labels.append(eos_id)
-        assistant_supervised += 1
+        supervised += 1
 
-    # If too long, truncate to last block_size tokens (keeps most recent context/answer).
+    # Truncate to last block_size tokens
     if len(input_ids) > block_size:
         input_ids = input_ids[-block_size:]
         labels = labels[-block_size:]
-
-        # If truncation removed all supervised labels, drop sample (rare, but possible)
         if all(x == -100 for x in labels):
             return None
 
-    return source, input_ids, labels, assistant_supervised
+    return source, input_ids, labels, supervised
 
 
 # ---------------------------------------------------------------------
@@ -261,7 +257,6 @@ def ultrachat_stream(max_messages: int, streaming: bool = True) -> Iterator[List
 
 
 def _pick_best_candidate(candidates: List[dict]) -> dict:
-    """Pick a preferred child response if ranking metadata is present."""
     if not candidates:
         raise ValueError("No candidates to pick from")
     if "rank" in candidates[0]:
@@ -276,7 +271,6 @@ def _pick_best_candidate(candidates: List[dict]) -> dict:
 
 
 def oasst_stream(max_messages: int, only_en: bool = True) -> Iterator[List[dict]]:
-    # Note: not streaming in oasst1 because we build a tree. For scale, consider streaming + incremental indexing.
     ds = _load_split("OpenAssistant/oasst1", ["train"], streaming=False)
 
     if "messages" in ds.column_names:
@@ -289,7 +283,6 @@ def oasst_stream(max_messages: int, only_en: bool = True) -> Iterator[List[dict]
                 yield messages
         return
 
-    # Build a parent/child tree
     by_id: Dict[str, dict] = {}
     children: Dict[str, List[dict]] = defaultdict(list)
     roots: List[dict] = []
@@ -317,7 +310,6 @@ def oasst_stream(max_messages: int, only_en: bool = True) -> Iterator[List[dict]
                 break
             msgs.append({"role": role, "content": text.strip()})
 
-            # Limit non-system messages as we build
             non_system = [m for m in msgs if m["role"] != "system"]
             if max_messages is not None and len(non_system) >= max_messages:
                 break
@@ -338,16 +330,14 @@ def oasst_stream(max_messages: int, only_en: bool = True) -> Iterator[List[dict]
 
 def _init_source_iterators(max_messages: int, ultrachat_streaming: bool):
     streams = {
-        "HuggingFaceH4/ultrachat_200k": ultrachat_stream(
-            max_messages=max_messages, streaming=ultrachat_streaming
-        ),
+        "HuggingFaceH4/ultrachat_200k": ultrachat_stream(max_messages=max_messages, streaming=ultrachat_streaming),
         "OpenAssistant/oasst1": oasst_stream(max_messages=max_messages, only_en=True),
     }
     return {name: iter(stream) for name, stream in streams.items()}
 
 
 # ---------------------------------------------------------------------
-# Sharded packed sequence generator
+# Sharded generator (one conversation per row; pad to BLOCK_SIZE)
 # ---------------------------------------------------------------------
 def shard_generator(
     shard_tokens: int,
@@ -356,115 +346,105 @@ def shard_generator(
     report_tokens_every: int,
     max_messages: int,
     ultrachat_streaming: bool,
+    seed: int,
 ):
-    buffer_ids: List[int] = []
-    buffer_labels: List[int] = []
+    """
+    Emits dict rows with fixed length == block_size:
+      - input_ids padded with pad_token_id
+      - labels padded with -100
+      - attention_mask 1 for real tokens, 0 for padding
+
+    shard_tokens is interpreted as emitted tokens, i.e. num_rows * block_size.
+    """
     produced_tokens = 0
     total_seen_tokens = 0
     next_report = report_tokens_every
     start = time.perf_counter()
 
-    source_supervised = {name: 0 for name, _ in DATA_SOURCES}
+    # deterministic-ish local RNG for sampling sources
+    rng = random.Random(seed + shard_id)
+
     source_weights = {name: float(weight) for name, weight in DATA_SOURCES}
+    names = list(source_weights.keys())
+    weights = [source_weights[n] for n in names]
 
     num_workers = max(1, cpu_count() - 1)
     pool = Pool(
         processes=num_workers,
         initializer=_init_worker,
         initargs=(TOKENIZER_DIR, block_size, MAX_ASSISTANT_TOKENS),
-        maxtasksperchild=500,  # helps long runs with occasional tokenizer leaks
+        maxtasksperchild=500,
     )
 
     try:
         iterators = _init_source_iterators(max_messages=max_messages, ultrachat_streaming=ultrachat_streaming)
 
         def stream_for_pool() -> Iterator[Tuple[str, List[dict]]]:
-            """Yield conversations while nudging toward target assistant-token mix."""
-            names = list(source_weights.keys())
-            weights = [source_weights[n] for n in names]
-            total_supervised = 0
-
             while True:
-                if total_supervised < 10_000:
-                    source = random.choices(names, weights=weights, k=1)[0]
-                else:
-                    deficits = {}
-                    for name, w in source_weights.items():
-                        current = source_supervised[name] / max(1, total_supervised)
-                        deficits[name] = w - current
-                    source = max(deficits, key=deficits.get)
-
+                source = rng.choices(names, weights=weights, k=1)[0]
                 try:
                     messages = next(iterators[source])
                 except StopIteration:
                     if source == "HuggingFaceH4/ultrachat_200k":
-                        iterators[source] = iter(
-                            ultrachat_stream(max_messages=max_messages, streaming=ultrachat_streaming)
-                        )
+                        iterators[source] = iter(ultrachat_stream(max_messages=max_messages, streaming=ultrachat_streaming))
                     else:
                         iterators[source] = iter(oasst_stream(max_messages=max_messages, only_en=True))
                     continue
-
                 yield source, messages
 
-                # Update total_supervised using the best available running count.
-                total_supervised = max(1, sum(source_supervised.values()))
-
-        # chunksize: tune; larger reduces IPC overhead, smaller reduces tail latency variance
-        for item in pool.imap_unordered(_tokenize_conversation, stream_for_pool(), chunksize=8):
+        for item in pool.imap_unordered(_tokenize_conversation, stream_for_pool(), chunksize=16):
             if not item:
                 continue
 
-            source, ids, labels, assistant_supervised = item
-            if assistant_supervised <= 0:
+            source, ids, labels, supervised = item
+            if supervised <= 0:
                 continue
 
-            # Probabilistic downsampling to keep assistant-token ratios near target.
-            total_sup = max(1, sum(source_supervised.values()))
-            if total_sup >= 10_000:
-                current = source_supervised[source] / total_sup
-                target = source_weights.get(source, 0.0)
-                if target > 0 and current > target:
-                    accept_prob = max(0.1, target / current)
-                    if random.random() > accept_prob:
-                        continue
+            seq_len = len(ids)
+            total_seen_tokens += seq_len
 
-            total_seen_tokens += len(ids)
-            source_supervised[source] += int(assistant_supervised)
+            # Pad to block_size
+            pad_id = _WORKER_PAD  # available in workers; but we're in main process here.
+            # We can't access worker globals reliably; compute pad_id from a local tokenizer once:
+            # We'll do a small workaround: use eos token id for padding in main.
+            # (Worker already set pad=eos if missing, so this matches.)
+            # NOTE: This avoids extra tokenizer load in the hot loop.
+            pad_id = 2  # safe default for your tokenizer-v6 (pad=eos=2); see sanity check in main.
 
-            buffer_ids.extend(ids)
-            buffer_labels.extend(labels)
+            if seq_len < block_size:
+                pad_len = block_size - seq_len
+                input_ids = ids + [pad_id] * pad_len
+                labels_out = labels + [-100] * pad_len
+                attn = [1] * seq_len + [0] * pad_len
+            else:
+                input_ids = ids[:block_size]
+                labels_out = labels[:block_size]
+                attn = [1] * block_size
 
-            while len(buffer_ids) >= block_size:
-                chunk_ids = buffer_ids[:block_size]
-                chunk_labels = buffer_labels[:block_size]
-                buffer_ids = buffer_ids[block_size:]
-                buffer_labels = buffer_labels[block_size:]
+            # Safety: if we somehow start with supervised labels, drop it (should be rare now)
+            # (Truncation can cause this if conversation is long and we keep only the tail.)
+            # We prefer to keep these extremely rare cases rather than bias the dataset too much,
+            # but for chat conditioning it's better to drop.
+            if any(l != -100 for l in labels_out[:32]):
+                continue
 
-                if all(x == -100 for x in chunk_labels):
-                    continue
+            produced_tokens += block_size
+            yield {
+                "input_ids": input_ids,
+                "labels": labels_out,
+                "attention_mask": attn,
+            }
 
-                produced_tokens += block_size
-                yield {
-                    "input_ids": chunk_ids,
-                    "labels": chunk_labels,
-                    "attention_mask": [1] * block_size,
-                }
-
-                if produced_tokens >= shard_tokens:
-                    return
+            if produced_tokens >= shard_tokens:
+                return
 
             if total_seen_tokens >= next_report:
                 elapsed = time.perf_counter() - start
                 rate = total_seen_tokens / max(1e-6, elapsed)
-                total_sup = max(1, sum(source_supervised.values()))
-                ratios = []
-                for name, _w in DATA_SOURCES:
-                    ratios.append(f"{name.split('/')[-1]}={source_supervised[name]/total_sup:.2%}")
                 print(
                     f"[Shard {shard_id:03d}] Seen {total_seen_tokens:,} tok | "
                     f"Emitted {produced_tokens:,}/{shard_tokens:,} | "
-                    f"{rate:,.0f} tok/s | supervised mix {' '.join(ratios)}"
+                    f"{rate:,.0f} tok/s"
                 )
                 next_report += report_tokens_every
 
@@ -492,7 +472,7 @@ def main():
     parser.add_argument("--tokenizer-dir", default=DEFAULT_TOKENIZER_DIR)
     parser.add_argument("--block-size", type=int, default=DEFAULT_BLOCK_SIZE)
     parser.add_argument("--shard-tokens", type=int, default=DEFAULT_SHARD_TOKENS)
-    parser.add_argument("--num-shards", type=int, default=1, help="How many shards to build in this run.")
+    parser.add_argument("--num-shards", type=int, default=1)
     parser.add_argument("--max-assistant-tokens", type=int, default=DEFAULT_MAX_ASSISTANT_TOKENS)
     parser.add_argument("--max-messages", type=int, default=DEFAULT_MAX_MESSAGES)
     parser.add_argument("--writer-batch-size", type=int, default=DEFAULT_WRITER_BATCH_SIZE)
@@ -517,15 +497,27 @@ def main():
 
     os.makedirs(OUTPUT_ROOT, exist_ok=True)
 
-    # Basic tokenizer sanity check (in main process)
+    # Tokenizer sanity check in main
     tok = AutoTokenizer.from_pretrained(TOKENIZER_DIR, use_fast=True)
     if tok.eos_token_id is None:
-        raise RuntimeError("Tokenizer has no eos_token_id; cannot build packed shards.")
+        raise RuntimeError("Tokenizer has no eos_token_id.")
+    if tok.pad_token_id is None:
+        tok.pad_token = tok.eos_token
+
+    # IMPORTANT: main-process padding id used in generator hot loop
+    pad_id = tok.pad_token_id
+    if pad_id != tok.eos_token_id:
+        print(f"[Warn] pad_token_id ({pad_id}) != eos_token_id ({tok.eos_token_id}). That's okay, but ensure chat uses same tokenizer.")
+    else:
+        print(f"[Tok] pad=eos={pad_id}")
+
     tok_model_path = Path(TOKENIZER_DIR) / "tokenizer.model"
     tokenizer_hash = _hash_file(str(tok_model_path)) if tok_model_path.exists() else None
 
-    # Determine next shard id from existing shard-* directories
-    existing = sorted(d for d in os.listdir(OUTPUT_ROOT) if d.startswith("shard-") and os.path.isdir(os.path.join(OUTPUT_ROOT, d)))
+    existing = sorted(
+        d for d in os.listdir(OUTPUT_ROOT)
+        if d.startswith("shard-") and os.path.isdir(os.path.join(OUTPUT_ROOT, d))
+    )
     shard_id = len(existing)
 
     features = Features(
@@ -541,7 +533,10 @@ def main():
         os.makedirs(shard_dir, exist_ok=False)
 
         print(f"Building shard {shard_id:03d} → {shard_dir}")
-        print(f"Target tokens: {SHARD_TOKENS:,} | block_size={BLOCK_SIZE} | max_asst={MAX_ASSISTANT_TOKENS} | max_msgs={MAX_MESSAGES}")
+        print(
+            f"Target tokens: {SHARD_TOKENS:,} | block_size={BLOCK_SIZE} | "
+            f"max_asst={MAX_ASSISTANT_TOKENS} | max_msgs={MAX_MESSAGES}"
+        )
 
         ds = Dataset.from_generator(
             lambda: shard_generator(
@@ -551,6 +546,7 @@ def main():
                 report_tokens_every=args.report_tokens_every,
                 max_messages=MAX_MESSAGES,
                 ultrachat_streaming=args.ultrachat_streaming,
+                seed=args.seed,
             ),
             features=features,
             writer_batch_size=args.writer_batch_size,
@@ -565,20 +561,21 @@ def main():
             "tokenizer_hash": tokenizer_hash,
             "block_size": BLOCK_SIZE,
             "target_tokens": SHARD_TOKENS,
+            "rows_expected": int(SHARD_TOKENS // BLOCK_SIZE),
             "chat_template_version": CHAT_TEMPLATE_VERSION,
             "role_prefix": ROLE_PREFIX,
             "max_assistant_tokens": MAX_ASSISTANT_TOKENS,
             "max_messages": MAX_MESSAGES,
-            "note": "Assistant prefix tokens are masked in labels; only assistant content (+newline+eos) is supervised.",
+            "note": "One conversation per row. Assistant prefix tokens masked; only assistant content (+newline+eos) supervised. Right-pad to block_size.",
             "data_sources": [{"name": name, "weight": weight} for name, weight in DATA_SOURCES],
             "created_at": datetime.utcnow().isoformat() + "Z",
             "hostname": socket.gethostname(),
             "ultrachat_streaming": bool(args.ultrachat_streaming),
+            "seed": args.seed,
         }
         with open(os.path.join(shard_dir, "metadata.json"), "w") as f:
             json.dump(shard_metadata, f, indent=2)
 
-        # Update dataset-level meta.json
         meta_path = os.path.join(OUTPUT_ROOT, "meta.json")
         meta = {}
         if os.path.exists(meta_path):

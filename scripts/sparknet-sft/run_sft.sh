@@ -5,9 +5,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-RUN_NAME="sparknet-400m-v1-instruct"
+RUN_NAME="sparknet-400m-v1-instruct-v2"
 
-DATASET_ROOT="$PROJECT_ROOT/datasets/sft_chat_v1"
+DATASET_ROOT="$PROJECT_ROOT/datasets/sft_chat_v2"
 CHECKPOINT_ROOT="$PROJECT_ROOT/checkpoints/sparknet-400m-v1"
 TOKENIZER_DIR="$PROJECT_ROOT/tokenizer-v6"
 
@@ -15,7 +15,7 @@ LOG_DIR="$PROJECT_ROOT/logs/$RUN_NAME"
 mkdir -p "$LOG_DIR"
 
 echo "======================================"
-echo "Launching SparkNet-400M v1 SFT Phase 1"
+echo "Launching SparkNet-400M v1 SFT v2 Phase 1"
 echo "Run name: $RUN_NAME"
 echo "Started at: $(date)"
 echo "======================================"

@@ -47,7 +47,7 @@ class RunConfig:
 
     model_path: str = "checkpoints/sparknet-400m-v1"
     tokenizer_path: str = "./tokenizer-v6"
-    train_root: str = "datasets/sft_chat_v1"
+    train_root: str = "datasets/sft_chat_v2"
     block_size: int = 1024
 
     # Training
@@ -70,7 +70,7 @@ class RunConfig:
     eval_steps: Optional[int] = None  # default: save_steps if eval enabled
 
     # I/O + cadence
-    output_dir: str = "checkpoints/sparknet-400m-v1-instruct"
+    output_dir: str = "checkpoints/sparknet-400m-v1-instruct-v2"
     logging_steps: int = 50
     save_steps: int = 1000
     save_total_limit: Optional[int] = 3
@@ -327,7 +327,7 @@ def main():
         save_steps=cfg.save_steps,
         save_total_limit=cfg.save_total_limit,
 
-        evaluation_strategy=evaluation_strategy,
+        eval_strategy=evaluation_strategy,
         eval_steps=eval_steps,
         load_best_model_at_end=load_best,
         metric_for_best_model=metric_for_best,
