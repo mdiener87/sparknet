@@ -4,8 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-CONFIG_PATH="${1:-$PROJECT_ROOT/configs/sparknet-400m/sft_v4.json}"
-RUN_NAME="${RUN_NAME:-sparknet-400m-v1-instruct-v4}"
+CONFIG_PATH="${1:-$PROJECT_ROOT/configs/sparknet-400m/sft_v5.json}"
+RUN_NAME="${RUN_NAME:-sparknet-400m-v1-instruct-v5}"
 
 LOG_DIR="$PROJECT_ROOT/logs/$RUN_NAME"
 mkdir -p "$LOG_DIR"
@@ -13,7 +13,7 @@ mkdir -p "$LOG_DIR"
 cd "$PROJECT_ROOT"
 
 echo "======================================"
-echo "Launching SparkNet-400M SFT v4"
+echo "Launching SparkNet-400M SFT v5"
 echo "Config: $CONFIG_PATH"
 echo "Run name: $RUN_NAME"
 echo "Started at: $(date)"
@@ -46,12 +46,12 @@ fi
   echo
 } > "$LOG_DIR/launch_info.txt"
 
-python "$PROJECT_ROOT/scripts/sparknet-sft/train_sft.py" \
+python "$PROJECT_ROOT/scripts/sparknet-sft/train_sft_v5.py" \
   --config "$CONFIG_PATH" \
   --run-name "$RUN_NAME" \
   | tee "$LOG_DIR/train.log"
 
 echo "======================================"
-echo "SparkNet-400M SFT v4 finished"
+echo "SparkNet-400M SFT v5 finished"
 echo "Finished at: $(date)"
 echo "======================================"

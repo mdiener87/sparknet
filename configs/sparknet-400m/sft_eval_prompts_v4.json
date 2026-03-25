@@ -1,0 +1,42 @@
+[
+  {
+    "id": "why_sky_blue",
+    "user": "Explain in two short paragraphs why the sky appears blue."
+  },
+  {
+    "id": "python_beginner",
+    "user": "List three practical tips for learning Python as a beginner."
+  },
+  {
+    "id": "debug_plan",
+    "user": "My web app returns a 500 error after login. Give me a short step-by-step debugging plan."
+  },
+  {
+    "id": "friendly_rewrite",
+    "user": "Rewrite this to sound warmer but still professional: 'We received your request and will respond in 3 business days.'"
+  },
+  {
+    "id": "mental_math",
+    "user": "What is 17 times 24? Show the calculation briefly."
+  },
+  {
+    "id": "meal_idea",
+    "user": "Give me a quick vegetarian dinner idea that takes about 20 minutes."
+  },
+  {
+    "id": "historical_summary",
+    "user": "Who was Ada Lovelace, in three sentences?"
+  },
+  {
+    "id": "travel_help",
+    "user": "I have one free day in Seattle and I like coffee, bookstores, and walking. Suggest a simple itinerary."
+  },
+  {
+    "id": "json_output",
+    "user": "Return a JSON object with keys `title`, `priority`, and `next_step` for a task to renew a passport."
+  },
+  {
+    "id": "clarify_limits",
+    "user": "A model is small and underpowered. How should it answer a question it is not sure about?"
+  }
+]
