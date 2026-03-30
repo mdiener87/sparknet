@@ -13,8 +13,8 @@ from typing import Optional, List
 import torch
 from datasets import Dataset, concatenate_datasets, load_dataset
 from transformers import (
-    AutoTokenizer,
     LlamaConfig,
+    LlamaTokenizer,
     AutoModelForCausalLM,
     Trainer,
     TrainingArguments,
@@ -22,6 +22,8 @@ from transformers import (
     default_data_collator,
     set_seed,
 )
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # -----------------------------
 # Config
@@ -85,6 +87,25 @@ def set_tf32(enable: bool = True):
         torch.backends.cuda.matmul.fp32_precision = "tf32" if enable else "ieee"
     except Exception:
         pass
+
+def resolve_repo_path(path: str) -> str:
+    p = Path(path).expanduser()
+    if p.is_absolute():
+        return str(p)
+    return str((REPO_ROOT / p).resolve())
+
+
+def load_sparknet_tokenizer(tokenizer_path: str, padding_side: str = "right"):
+    path = Path(tokenizer_path).expanduser()
+    model_path = path / "tokenizer.model" if path.is_dir() else path
+    if not model_path.exists():
+        raise FileNotFoundError(f"Tokenizer model not found: {model_path}")
+
+    tok = LlamaTokenizer(vocab_file=str(model_path), legacy=True)
+    tok.padding_side = padding_side
+    if tok.pad_token_id is None:
+        tok.pad_token = tok.eos_token
+    return tok
     try:
         torch.backends.cudnn.conv.fp32_precision = "tf32" if enable else "ieee"
     except Exception:
@@ -265,23 +286,26 @@ def main():
     if args_cli.run_name:
         cfg.run_name = args_cli.run_name
 
+    cfg.tokenizer_path = resolve_repo_path(cfg.tokenizer_path)
+    cfg.train_root = resolve_repo_path(cfg.train_root)
+    if cfg.sample_prompts_path:
+        cfg.sample_prompts_path = resolve_repo_path(cfg.sample_prompts_path)
+
     # Environment
-    os.environ["HF_DATASETS_CACHE"] = os.path.expanduser("~/projects/sparknet/cache")
+    os.environ["HF_DATASETS_CACHE"] = str((REPO_ROOT / "cache").resolve())
     os.environ["HF_DATASETS_OFFLINE"] = "1"
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
     set_tf32(True)
     set_seed(cfg.seed)
 
-    run_dir = f"checkpoints/{cfg.run_name}"
-    log_dir = f"logs/{cfg.run_name}"
+    run_dir = str((REPO_ROOT / "checkpoints" / cfg.run_name).resolve())
+    log_dir = str((REPO_ROOT / "logs" / cfg.run_name).resolve())
     os.makedirs(run_dir, exist_ok=True)
     os.makedirs(log_dir, exist_ok=True)
 
     # Tokenizer
-    tok = AutoTokenizer.from_pretrained(cfg.tokenizer_path, padding_side="right", use_fast=False)
-    if tok.pad_token_id is None:
-        tok.pad_token = tok.eos_token
+    tok = load_sparknet_tokenizer(cfg.tokenizer_path, padding_side="right")
     eos_id = tok.eos_token_id
 
     # Data

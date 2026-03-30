@@ -1,0 +1,44 @@
+{
+  "seed": 42,
+  "tokenizer_path": "./tokenizer-v6",
+  "output_root": "datasets/sparknet-v2-pretrain",
+  "block_size": 1024,
+  "shard_tokens": 500000000,
+  "writer_batch_size": 50000,
+  "report_tokens_every": 10000000,
+  "sources": [
+    {
+      "name": "HuggingFaceFW/fineweb-edu",
+      "split": "train",
+      "prob": 0.5,
+      "text_fields": ["text"]
+    },
+    {
+      "name": "mlfoundations/dclm-baseline-1.0",
+      "split": "train",
+      "prob": 0.15,
+      "text_fields": ["text"]
+    },
+    {
+      "name": "HuggingFaceFW/finepdfs",
+      "config_name": "eng_Latn",
+      "split": "train",
+      "prob": 0.15,
+      "text_fields": ["text"]
+    },
+    {
+      "name": "HuggingFaceFW/finewiki",
+      "config_name": "en",
+      "split": "train",
+      "prob": 0.1,
+      "text_fields": ["text"]
+    },
+    {
+      "name": "HuggingFaceTB/smollm-corpus",
+      "config_name": "cosmopedia-v2",
+      "split": "train",
+      "prob": 0.1,
+      "text_fields": ["text"]
+    }
+  ]
+}

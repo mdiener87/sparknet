@@ -1,0 +1,41 @@
+{
+  "seed": 42,
+  "tokenizer_path": "./tokenizer-v6",
+  "output_root": "datasets/sparknet-v2-pretrain-smoke",
+  "block_size": 1024,
+  "shard_tokens": 120000000,
+  "writer_batch_size": 50000,
+  "report_tokens_every": 5000000,
+  "sources": [
+    {
+      "name": "codelion/fineweb-edu-100M",
+      "split": "train",
+      "prob": 0.5,
+      "text_fields": ["text"]
+    },
+    {
+      "name": "codelion/dclm-baseline-100M",
+      "split": "train",
+      "prob": 0.15,
+      "text_fields": ["text"]
+    },
+    {
+      "name": "codelion/finepdfs-100M",
+      "split": "train",
+      "prob": 0.15,
+      "text_fields": ["text"]
+    },
+    {
+      "name": "codelion/finewiki-100M",
+      "split": "train",
+      "prob": 0.1,
+      "text_fields": ["text"]
+    },
+    {
+      "name": "HuggingFaceTB/cosmopedia-100k",
+      "split": "train",
+      "prob": 0.1,
+      "text_fields": ["text"]
+    }
+  ]
+}
