@@ -11,6 +11,9 @@ from typing import Dict, Iterator, List, Optional
 
 import torch
 from datasets import Dataset, Features, Sequence, Value, disable_caching, load_dataset
+from datasets.exceptions import DatasetGenerationError
+from huggingface_hub.errors import HfHubHTTPError
+from requests.exceptions import RequestException
 from transformers import LlamaTokenizer
 
 os.environ["HF_DATASETS_DISABLE_CACHE"] = "1"
@@ -26,6 +29,8 @@ DEFAULT_WRITER_BATCH_SIZE = 50_000
 DEFAULT_REPORT_TOKENS_EVERY = 10_000_000
 
 FALLBACK_TEXT_FIELDS = ("text", "content", "body", "page_content")
+SOURCE_RETRY_LIMIT = 8
+SOURCE_RETRY_BASE_DELAY = 2.0
 
 
 _WORKER_TOK = None
@@ -189,12 +194,60 @@ def load_source_dataset(source: Dict[str, object]):
     )
 
 
+def is_transient_source_error(err: Exception) -> bool:
+    transient_types = (HfHubHTTPError, RequestException, ConnectionError, TimeoutError, DatasetGenerationError)
+    if isinstance(err, transient_types):
+        return True
+
+    text = str(err).lower()
+    return any(
+        needle in text
+        for needle in (
+            "502",
+            "503",
+            "504",
+            "bad gateway",
+            "gateway timeout",
+            "read timed out",
+            "temporarily unavailable",
+            "connection aborted",
+            "connection reset",
+        )
+    )
+
+
+def source_name(source: Dict[str, object]) -> str:
+    config_name = source.get("config_name")
+    name = str(source.get("name", "json"))
+    if config_name is not None:
+        return f"{name}[{config_name}]"
+    return name
+
+
 def source_text_iterator(source: Dict[str, object]) -> Iterator[str]:
-    dataset = load_source_dataset(source)
-    for row in dataset:
-        if not isinstance(row, dict):
-            continue
-        yield from extract_texts(row, source)
+    attempt = 0
+    while True:
+        try:
+            dataset = load_source_dataset(source)
+            for row in dataset:
+                if not isinstance(row, dict):
+                    continue
+                yield from extract_texts(row, source)
+            return
+        except Exception as err:
+            if not is_transient_source_error(err):
+                raise
+            attempt += 1
+            if attempt > SOURCE_RETRY_LIMIT:
+                raise RuntimeError(
+                    f"Source {source_name(source)} failed after {SOURCE_RETRY_LIMIT} retries"
+                ) from err
+            delay = SOURCE_RETRY_BASE_DELAY * (2 ** (attempt - 1))
+            print(
+                f"[SourceRetry] {source_name(source)} failed with transient error: {err}. "
+                f"Retrying in {delay:.0f}s ({attempt}/{SOURCE_RETRY_LIMIT})"
+            )
+            time.sleep(delay)
 
 
 def init_source_iterators(sources: List[Dict[str, object]]) -> Dict[str, Iterator[str]]:

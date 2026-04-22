@@ -10,10 +10,10 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, set_seed
 # Config
 # ---------------------------------------------------------
 MODEL_CONFIGS = [
-    {"label": "SparkNet 70M v5", "path": "checkpoints/sparknet-70m-v5"},
-    {"label": "GPT-2", "path": "gpt2"},
-    {"label": "CodeLion GPT-2 70M", "path": "codelion/gpt-2-70m"},
-    {"label": "DienerTech GPT-2 70M", "path": "DienerTech/sparknet-70m"},
+    # {"label": "SparkNet 70M v5", "path": "checkpoints/sparknet-70m-v5"},
+    # {"label": "GPT-2", "path": "gpt2"},
+    # {"label": "CodeLion GPT-2 70M", "path": "codelion/gpt-2-70m"},
+    {"label": "DienerTech Sparknet-400m v2 22889", "path": "checkpoints/sparknet-400m-v2-12b/checkpoint-22889"},
 ]
 
 DATASET_CONFIGS = [
