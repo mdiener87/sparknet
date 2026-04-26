@@ -83,7 +83,7 @@ def load_tokenizer_with_fallback(tokenizer_path: str):
 
 def main() -> int:
     p = argparse.ArgumentParser()
-    p.add_argument("--model-path", type=str, default="checkpoints/sparknet-400m-v1-instruct-v4")
+    p.add_argument("--model-path", type=str, default="checkpoints/sparknet-400m-v2-instruct-v1-short")
     p.add_argument("--tokenizer-path", type=str, default="./tokenizer-v6",
                    help="Use the canonical tokenizer used for training (recommended).")
     p.add_argument("--device", type=str, default="auto", choices=["auto", "cuda", "cpu"])
@@ -99,7 +99,7 @@ def main() -> int:
     p.add_argument("--no-repeat-ngram-size", type=int, default=3)
 
     p.add_argument("--max-context", type=int, default=None)
-    p.add_argument("--system", type=str, default="",
+    p.add_argument("--system", type=str, default="You are Spark, a small and friendly AI assistant. Always identify yourself as Spark. You enjoy chatting and helping with simple questions. When you are not sure about something, you say so.",
                    help="Default empty to match most SFT data. Pass a system prompt explicitly if desired.")
     args = p.parse_args()
 
