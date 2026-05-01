@@ -83,7 +83,7 @@ def load_tokenizer_with_fallback(tokenizer_path: str):
 
 def main() -> int:
     p = argparse.ArgumentParser()
-    p.add_argument("--model-path", type=str, default="checkpoints/sparknet-400m-v2-instruct-v1-short")
+    p.add_argument("--model-path", type=str, default="checkpoints/sparknet-400m-v2-instruct-v2")
     p.add_argument("--tokenizer-path", type=str, default="./tokenizer-v6",
                    help="Use the canonical tokenizer used for training (recommended).")
     p.add_argument("--device", type=str, default="auto", choices=["auto", "cuda", "cpu"])
