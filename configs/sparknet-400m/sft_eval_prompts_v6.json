@@ -1,0 +1,178 @@
+[
+  {
+    "id": "greeting_hi",
+    "bucket": "social",
+    "user": "Hi! How are you doing today?",
+    "special_checks": ["is_greeting"],
+    "max_words": 60
+  },
+  {
+    "id": "greeting_rough_day",
+    "bucket": "social",
+    "user": "I'm having a really rough day.",
+    "special_checks": ["is_empathetic"],
+    "max_words": 70
+  },
+  {
+    "id": "persona_name",
+    "bucket": "persona",
+    "user": "What's your name?",
+    "special_checks": ["is_persona"],
+    "max_words": 60
+  },
+  {
+    "id": "persona_yourself",
+    "bucket": "persona",
+    "user": "Tell me a little about yourself.",
+    "special_checks": ["is_persona"],
+    "min_words": 10,
+    "max_words": 80
+  },
+  {
+    "id": "factual_capital",
+    "bucket": "factual",
+    "user": "What is the capital of France?",
+    "must_include_any": ["Paris", "paris"],
+    "max_words": 30
+  },
+  {
+    "id": "factual_days",
+    "bucket": "factual",
+    "user": "How many days are in a week?",
+    "must_include_any": ["7", "seven"],
+    "max_words": 20
+  },
+  {
+    "id": "factual_plants",
+    "bucket": "factual",
+    "user": "What do plants need to grow?",
+    "must_include_any": ["water", "light", "sun", "soil"],
+    "max_words": 60
+  },
+  {
+    "id": "explain_sky",
+    "bucket": "explanation",
+    "user": "Explain in two short paragraphs why the sky appears blue.",
+    "special_checks": ["sky_blue_basic"],
+    "min_words": 20,
+    "max_words": 110
+  },
+  {
+    "id": "explain_dreams",
+    "bucket": "explanation",
+    "user": "Why do people dream?",
+    "min_words": 15,
+    "max_words": 90
+  },
+  {
+    "id": "explain_conversation",
+    "bucket": "explanation",
+    "user": "What makes a good conversation?",
+    "min_words": 15,
+    "max_words": 90
+  },
+  {
+    "id": "advice_reading",
+    "bucket": "advice",
+    "user": "I want to start reading more books. Any suggestions for getting started?",
+    "min_words": 15,
+    "max_words": 100
+  },
+  {
+    "id": "advice_sleep",
+    "bucket": "advice",
+    "user": "I haven't been sleeping well lately. Any general tips?",
+    "must_include_any": ["sleep", "rest", "bed", "relax", "routine", "night"],
+    "min_words": 15,
+    "max_words": 90
+  },
+  {
+    "id": "advice_motivation",
+    "bucket": "advice",
+    "user": "What's a good way to stay motivated when working from home?",
+    "min_words": 15,
+    "max_words": 100
+  },
+  {
+    "id": "advice_pet",
+    "bucket": "advice",
+    "user": "I'm thinking of getting a dog. What should I think about first?",
+    "min_words": 15,
+    "max_words": 100
+  },
+  {
+    "id": "rewrite_warm",
+    "bucket": "rewrite",
+    "user": "Rewrite this to sound warmer but still professional: 'We received your request and will respond in 3 business days.'",
+    "special_checks": ["short_rewrite"],
+    "max_words": 45
+  },
+  {
+    "id": "task_summarize",
+    "bucket": "task",
+    "user": "Summarize this in one sentence: 'The meeting was long and covered many topics but ultimately reached no decisions.'",
+    "max_words": 35
+  },
+  {
+    "id": "rewrite_friendly",
+    "bucket": "rewrite",
+    "user": "Make this friendlier: 'Your account has been suspended.'",
+    "avoid_substrings": ["dear ", "sincerely"],
+    "max_words": 50
+  },
+  {
+    "id": "clarify_vague",
+    "bucket": "clarification",
+    "user": "Can you help me fix it?",
+    "special_checks": ["asks_for_clarification"],
+    "max_words": 60
+  },
+  {
+    "id": "uncertainty_stocks",
+    "bucket": "uncertainty",
+    "user": "What stock should I buy right now?",
+    "special_checks": ["expresses_uncertainty"],
+    "max_words": 80
+  },
+  {
+    "id": "uncertainty_behavior",
+    "bucket": "uncertainty",
+    "user": "A model is small and underpowered. How should it answer a question it is not sure about?",
+    "special_checks": ["uncertainty_behavior"],
+    "max_words": 90
+  },
+  {
+    "id": "multiturn_breakfast",
+    "bucket": "multiturn",
+    "messages": [
+      {"role": "user", "content": "Hi there!"},
+      {"role": "assistant", "content": "Hey! Good to chat with you. What's on your mind?"},
+      {"role": "user", "content": "I'm trying to figure out what to have for breakfast."}
+    ],
+    "min_words": 10,
+    "max_words": 80
+  },
+  {
+    "id": "multiturn_book",
+    "bucket": "multiturn",
+    "messages": [
+      {"role": "user", "content": "I just finished a really good book."},
+      {"role": "assistant", "content": "Oh nice! What was it?"},
+      {"role": "user", "content": "It was The Alchemist. Have you heard of it?"}
+    ],
+    "must_include_any": ["alchemist", "book", "story", "read", "paulo"],
+    "min_words": 10,
+    "max_words": 80
+  },
+  {
+    "id": "multiturn_career",
+    "bucket": "multiturn",
+    "messages": [
+      {"role": "user", "content": "I'm trying to think through a big decision."},
+      {"role": "assistant", "content": "I'm happy to help you think it through. What's the decision?"},
+      {"role": "user", "content": "Whether to change careers."}
+    ],
+    "min_words": 15,
+    "max_words": 100
+  }
+]

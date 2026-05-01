@@ -17,10 +17,14 @@ except ImportError as exc:  # pragma: no cover - guidance for missing dependency
 # Config
 # ---------------------------------------------------------
 MODEL_CONFIGS = [
-    {"label": "SparkNet 70M v5", "path": "checkpoints/sparknet-70m-v5"},
-    {"label": "SparkNet 70M v5", "path": "checkpoints/sparknet-400m-v1"},
-    {"label": "GPT-2", "path": "gpt2"},
-    {"label": "CodeLion GPT-2 70M", "path": "codelion/gpt-2-70m"},
+    # {"label": "SparkNet 70M v5", "path": "checkpoints/sparknet-70m-v5"},
+    # {"label": "SparkNet 70M v5", "path": "checkpoints/sparknet-400m-v1"},
+    {"label": "SparkNet 400m v2 chkpnt 12000", "path": "checkpoints/sparknet-400m-v2-12b/checkpoint-12000"},
+    {"label": "SparkNet 400m v2 chkpnt 20000", "path": "checkpoints/sparknet-400m-v2-12b/checkpoint-20000"},
+    {"label": "SparkNet 400m v2 chkpnt 21000", "path": "checkpoints/sparknet-400m-v2-12b/checkpoint-21000"},
+    {"label": "SparkNet 400m v2 chkpnt 22000", "path": "checkpoints/sparknet-400m-v2-12b/checkpoint-22000"},
+    # {"label": "GPT-2", "path": "gpt2"},
+    # {"label": "CodeLion GPT-2 70M", "path": "codelion/gpt-2-70m"},
 ]
 
 TASKS = [
@@ -28,9 +32,6 @@ TASKS = [
     "piqa",
     "arc_easy",
     "arc_challenge",
-    "mmlu",
-    "truthfulqa_mc2",
-    "winogrande",
 ]
 
 LM_EVAL_BATCH_SIZE = 8

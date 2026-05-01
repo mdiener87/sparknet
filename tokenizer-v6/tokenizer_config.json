@@ -1,6 +1,6 @@
 {
   "tokenizer_class": "LlamaTokenizer",
   "model_type": "llama",
-  "vocab_file": "tokenizer-v6/tokenizer.model",
+  "vocab_file": "tokenizer.model",
   "legacy": true
 }
