@@ -1,6 +1,13 @@
 # SparkNet v3: Hyperparameter Strategy
 
-Status: planning — drafted 2026-04-30
+Status: superseded for full-run launch — drafted 2026-04-30, updated 2026-05-06
+
+> Update: the v3 effort is now named `sparknet-410m-v1`. The original hparam
+> scripts lived in `scripts/sparknet-400m/`; they have been ported to
+> `scripts/sparknet-410m/` for tokenizer-v8, the hash-disjoint corpus eval
+> shard, and the 410M architecture. The old 400m logs remain historical
+> context only. The launch gate is now four 100M-token LR screens followed by
+> one 250M-token production-scheduler canary.
 
 ## Why this document exists
 

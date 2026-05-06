@@ -1,6 +1,6 @@
 # SparkNet-410M v1 Pretraining Plan
 
-Status: finalized 2026-05-06
+Status: run-readiness update in progress 2026-05-06
 
 ## Context
 
@@ -15,13 +15,13 @@ This document records all architectural, tokenizer, hyperparameter, data, and to
 | Area | v2 | v1 (this run) |
 |---|---|---|
 | Architecture | 29 layers, intermediate 2736, ~368M params | 32 layers, intermediate 2816, ~410M params |
-| Tokenizer | SentencePiece v6 (32k, `LlamaTokenizer`) | ByteLevel BPE v7 (32k, `PreTrainedTokenizerFast`) |
-| ChatML tokens | Added at SFT time (embedding resize) | Baked into base vocab; trained from pretraining day one |
-| LR | 2e-4 (inherited from v1, untested) | 1.83e-3 (Phase 2 LR range test, ceiling / 3) |
-| Warmup | 2% | 2% (Phase 4 confirmed; unchanged) |
+| Tokenizer | SentencePiece v6 (32k, `LlamaTokenizer`) | ByteLevel BPE v8 (32k, `PreTrainedTokenizerFast`, full byte alphabet) |
+| ChatML tokens | Added at SFT time (embedding resize) | Baked into base vocab, registered as additional specials, plus 0.5% ChatML pretraining slice |
+| LR | 2e-4 (inherited from v1, untested) | Pending 410m LR screen + 250M canary |
+| Warmup | 2% | 2% default; confirmed by canary before full run |
 | Grad accum | 16 → 524k tok/step | 32 → 1M tok/step (Phase 1 throughput test) |
 | Cosine floor | None (decays to zero) | 10% of peak LR |
-| Eval dataset | WikiText-2 (261 rows, wrong distribution) | Held-out corpus shard (9,765 rows, same distribution) |
+| Eval dataset | WikiText-2 (261 rows, wrong distribution) | Hash-disjoint held-out corpus shard (9,765 rows, same distribution) |
 | Checkpoint retention | 5 rolling checkpoints | Top-3 by loss + 5 cardinal token snapshots + last-3 rolling |
 | Data mix | 5 sources, no code, no math | 7 sources, +7% python-edu, +5% open-web-math |
 | Token budget | 12B | 10B (Chinchilla-optimal; 12B is 20% overtraining) |
@@ -40,7 +40,7 @@ SparkNet-410M v1 is a LLaMA-style decoder-only transformer trained from scratch 
 | `num_kv_heads` | 8 | GQA; unchanged |
 | `intermediate_size` | 2816 | 11 × 256; full 256-alignment for CUDA Tensor Cores (v2 was 2736 = off-aligned) |
 | `block_size` | 1024 | |
-| `rope_theta` | 10000.0 | |
+| `rope_theta` | 500000.0 | LLaMA 3-style; low-frequency RoPE period extends to ~3M tokens, enabling clean inference beyond training context without post-hoc extension tricks |
 | `tie_word_embeddings` | True | Saves ~32M parameters |
 | **Total parameters** | **~410M** | |
 
@@ -68,21 +68,21 @@ ByteLevel BPE processes every byte position independently. There is no whitespac
 | `add_prefix_space` | False | Required for tiktoken-style byte independence |
 | BOS token | `<|begin_of_text|>` | LLaMA 3 convention; well-tested by llama.cpp |
 | EOS/PAD token | `<|end_of_text|>` | |
-| `<|im_start|>` | In base vocabulary | Trained on billions of tokens before SFT |
-| `<|im_end|>` | In base vocabulary | Same; no embedding resize needed at SFT time |
+| `<|im_start|>` | In base vocabulary + `additional_special_tokens` | Receives base pretraining gradient from the 0.5% ChatML slice; no SFT resize |
+| `<|im_end|>` | In base vocabulary + `additional_special_tokens` | Same |
 | Chat template | ChatML (Jinja2, embedded in `tokenizer_config.json`) | Baked into GGUF automatically; no `--chat-template-file` at serve time |
 
 ### Why ChatML tokens belong in the base vocabulary
 
 In v2, `<|im_start|>` and `<|im_end|>` did not exist at pretraining time. At SFT they were added as `additional_special_tokens`, growing the embedding table from 32000 to 32002. The two new rows were initialized to the mean embedding — a generic initialization with no learned signal. A single 5-hour SFT pass is not enough to build reliable semantics for a brand-new vocabulary entry.
 
-In v1, both tokens are in the base vocabulary from the start. Even if they appear rarely in the pretraining corpus, their embeddings will be updated on billions of tokens before SFT begins. The SFT pass then refines semantics already grounded in context.
+In v1, both tokens are in the base vocabulary from the start and registered as `additional_special_tokens` in tokenizer metadata. A deterministic 0.5% pretraining slice wraps accepted training documents as ChatML continuations, so these embeddings receive real pretraining gradients before SFT. The SFT pass then refines semantics already grounded in context.
 
 ---
 
 ## Hyperparameters
 
-All hyperparameters were derived from experiments in `scripts/sparknet-410m/hparam_*.py` (Phase 1–4), run in May 2026 prior to this document.
+The old 400m hparam logs remain historical context. Final 410m LR selection is gated on the ported `scripts/sparknet-410m/hparam_*.py` harness using tokenizer-v8 and the hash-disjoint corpus eval shard.
 
 ### Batch size (Phase 1)
 
@@ -96,26 +96,21 @@ tokens per step = block_size × per_device_batch × grad_accum
 
 Peak VRAM: 78.54 GB of 128 GB. No OOM risk.
 
-### Learning rate (Phase 2 — authoritative)
+### Learning rate gate
 
-Phase 2 ran an exponential LR sweep from 1e-5 to 1e-1 over 400 steps to locate the training stability ceiling.
+The 400m Phase 2 LR range test found a high ceiling, but the old Phase 3 grid was too short and used an eval setup that has since been replaced. The 410m run therefore does not treat 1.83e-3 as final until the following gate passes:
 
-```
-Result:
-  ceiling_lr  = 5.495e-3
-  recommended = ceiling / 3 = 1.83e-3
-```
-
-**Phase 3 results (96-step grid) were discarded.** The three grid runs used a cosine schedule with `max_steps=96`, causing the LR to decay from peak to near-zero within the test window. At 96 steps the lower-LR run (5.5e-4) mechanically produced lower final loss not because it is a better LR, but because the cosine collapse was less severe at a lower starting point. This is not a meaningful signal for a 9,538-step full run. Phase 2's ceiling is the authoritative source.
-
-**Phase 4 (warmup sensitivity) ran at the wrong LR** (5.5e-4, the Phase 3 artifact) and therefore validates warmup stability at below-ceiling LR rather than at the target 1.83e-3. No instability was observed at either 1% or 3% warmup. The 2% recommendation is standard practice for a 10B-token run at this LR and is retained.
+1. Run four 100M-token LR screens at `5.5e-4`, `9e-4`, `1.2e-3`, and `1.83e-3`.
+2. Prefer the lower LR when eval/train losses are within 0.02 nats.
+3. Run one 250M-token production-scheduler canary at the selected LR.
+4. Reject any LR with NaN/inf, post-warmup loss jump, sustained gradient-norm instability, or clearly worse eval loss.
 
 ### Final hyperparameter table
 
 | Hyperparameter | Value | Source |
 |---|---|---|
-| `learning_rate` | 1.83e-3 | Phase 2, ceiling / 3 |
-| `warmup_ratio` | 0.02 | Phase 4 + standard practice |
+| `learning_rate` | TBD from 410m LR screen + canary | Candidate set: 5.5e-4, 9e-4, 1.2e-3, 1.83e-3 |
+| `warmup_ratio` | 0.02 | Production default; canary gate |
 | `grad_accum` | 32 | Phase 1 |
 | `weight_decay` | 0.1 | Unchanged from v2 |
 | `max_grad_norm` | 1.0 | Unchanged |
@@ -151,9 +146,13 @@ The v2 base model had no code or math in its pretraining corpus. Post-training a
 
 FineWeb-Edu is reduced from 50% to 44% to make room. The educational register it provides remains the dominant signal.
 
-### Document packing
+### Document packing and partitioning
 
 Each document is packed as `[BOS] token_ids [EOS]`, then documents are concatenated and sliced into 1024-token blocks. BOS/EOS boundaries teach the model document structure at pretraining time. This is a change from v2 where only EOS was appended (no BOS prepended), consistent with LLaMA 3 convention.
+
+Train/eval membership is determined by a stable hash over `source_name`, stripped text, and `holdout_salt="sparknet-410m-v1"`. The eval shard uses the 2% holdout bucket; training shards use the complement. This prevents overlap even though both builders stream the same upstream HF splits.
+
+For train only, 0.5% of accepted text chunks are deterministically wrapped as ChatML continuations. This gives `<|im_start|>` and `<|im_end|>` meaningful pretraining updates without changing the main corpus character.
 
 ### Token budget
 
@@ -171,7 +170,7 @@ The v2-12b pretraining used WikiText-2 validation as the eval set, yielding 261 
 
 ### v1 fix
 
-The eval dataset (`datasets/sparknet-v3-pretrain-eval`) is a single held-out shard built from the **same source mix** as the training data, with a different random seed (137 vs. 42). It contains:
+The eval dataset (`datasets/sparknet-410m-v1-pretrain-eval`) is a single hash-held-out shard built from the **same source mix** as the training data. It contains:
 
 ```
 10M tokens / 1024 tokens per block = 9,765 rows
@@ -179,7 +178,7 @@ The eval dataset (`datasets/sparknet-v3-pretrain-eval`) is a single held-out sha
 
 This gives a loss signal that tracks the training distribution throughout the full run. Statistical precision: standard error ≈ 0.004 loss units — sufficient to reliably distinguish checkpoints separated by a small fraction of a nat.
 
-The eval shard must be built **before** the training shards to avoid seed overlap.
+The eval shard is hash-disjoint from train regardless of build order, but it should still be built first so LR screens and canaries can run before the full dataset build finishes.
 
 ---
 
@@ -234,7 +233,7 @@ With the BPE tokenizer, step 5 is expected to pass on the first try. If it does 
 ## Run sequence
 
 ```bash
-# 1. Build tokenizer (once)
+# 1. Build tokenizer-v8 (once)
 python scripts/sparknet-410m/build_tokenizer.py
 
 # 2. Build eval shard (once, before training shards)
@@ -247,11 +246,14 @@ for i in $(seq 1 20); do
         --config configs/sparknet-410m/datasets_v1.json
 done
 
-# 4. Launch training (in tmux)
+# 4. Run LR screens + 250M canary before full launch
+python scripts/sparknet-410m/hparam_run_all.py --grad-accum 32
+
+# 5. Launch training (in tmux) after LR config is updated from hparam results
 tmux new -s sparknet-410m-v1
 ./scripts/sparknet-410m/run_pretrain_v1.sh
 
-# 5. Resume after interruption
+# 6. Resume after interruption
 python scripts/sparknet-410m/train_pretrain.py \
     --config configs/sparknet-410m/pretrain_v1.json \
     --resume latest

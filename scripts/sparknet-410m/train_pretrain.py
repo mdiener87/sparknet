@@ -59,9 +59,9 @@ class RunConfig:
     run_name: str = "sparknet-410m-v1"
     seed: int = 42
 
-    tokenizer_path: str = "./tokenizer-v7"
-    train_root: str = "datasets/sparknet-v3-pretrain"
-    eval_root: str = "datasets/sparknet-v3-pretrain-eval"
+    tokenizer_path: str = "./tokenizer-v8"
+    train_root: str = "datasets/sparknet-410m-v1-pretrain"
+    eval_root: str = "datasets/sparknet-410m-v1-pretrain-eval"
     block_size: int = 1024
 
     # Architecture (~410M)
@@ -70,7 +70,7 @@ class RunConfig:
     num_heads: int = 16
     num_kv_heads: int = 8
     intermediate_size: int = 2816
-    rope_theta: float = 10000.0
+    rope_theta: float = 500000.0
     rms_norm_eps: float = 1e-5
 
     # Training
@@ -135,13 +135,47 @@ def load_tokenizer(tokenizer_path: str) -> PreTrainedTokenizerFast:
     tok.padding_side = "right"
     if tok.pad_token_id is None:
         tok.pad_token = tok.eos_token
+    validate_tokenizer(tok)
     return tok
+
+
+def validate_tokenizer(tok: PreTrainedTokenizerFast):
+    expected_ids = {
+        "<|begin_of_text|>": 0,
+        "<|end_of_text|>": 1,
+        "<|im_start|>": 2,
+        "<|im_end|>": 3,
+    }
+    if tok.vocab_size != 32000 or len(tok) != 32000:
+        raise ValueError(f"Expected tokenizer vocab/len 32000, got vocab_size={tok.vocab_size}, len={len(tok)}")
+    if tok.bos_token != "<|begin_of_text|>" or tok.bos_token_id != 0:
+        raise ValueError(f"Unexpected BOS token/id: {tok.bos_token!r}/{tok.bos_token_id}")
+    if tok.eos_token != "<|end_of_text|>" or tok.eos_token_id != 1:
+        raise ValueError(f"Unexpected EOS token/id: {tok.eos_token!r}/{tok.eos_token_id}")
+    if tok.pad_token_id != tok.eos_token_id:
+        raise ValueError(f"Expected PAD to share EOS id, got pad={tok.pad_token_id}, eos={tok.eos_token_id}")
+    for token, expected_id in expected_ids.items():
+        actual_id = tok.convert_tokens_to_ids(token)
+        if actual_id != expected_id:
+            raise ValueError(f"{token} id mismatch: expected {expected_id}, got {actual_id}")
+    missing_additional = [t for t in ("<|im_start|>", "<|im_end|>") if t not in tok.additional_special_tokens]
+    if missing_additional:
+        raise ValueError(f"ChatML tokens missing from additional_special_tokens: {missing_additional}")
+    if not tok.chat_template:
+        raise ValueError("Tokenizer is missing chat_template")
+
+
+def is_complete_shard(path: Path) -> bool:
+    return (path / "dataset_info.json").exists() and (path / "state.json").exists()
 
 
 def load_prepacked(root: str, limit: Optional[int] = None) -> Dataset:
     shards = sorted(Path(root).glob("shard-*"), key=lambda p: p.name)
     if not shards:
         raise FileNotFoundError(f"No shard-* dirs found under: {root}")
+    incomplete = [str(p) for p in shards if not is_complete_shard(p)]
+    if incomplete:
+        raise RuntimeError("Incomplete shard directories found: " + ", ".join(incomplete))
     if limit is not None:
         shards = shards[:limit]
     print(f"[Data] Loading {len(shards)} shard(s) from {root}")
@@ -153,8 +187,13 @@ def load_prepacked(root: str, limit: Optional[int] = None) -> Dataset:
 
 
 def find_latest_checkpoint(output_dir: str) -> Optional[str]:
-    ckpts = sorted(Path(output_dir).glob("checkpoint-[0-9]*"),
-                   key=lambda p: int(p.name.split("-")[-1]))
+    ckpts = sorted(
+        (
+            p for p in Path(output_dir).glob("checkpoint-*")
+            if p.is_dir() and p.name[len("checkpoint-"):].isdigit()
+        ),
+        key=lambda p: int(p.name.split("-")[-1]),
+    )
     return str(ckpts[-1]) if ckpts else None
 
 
@@ -352,7 +391,7 @@ def main():
 
     # Model
     model_cfg = LlamaConfig(
-        vocab_size=tok.vocab_size,
+        vocab_size=len(tok),
         hidden_size=cfg.hidden_size,
         intermediate_size=cfg.intermediate_size,
         num_hidden_layers=cfg.num_layers,

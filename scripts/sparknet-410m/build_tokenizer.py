@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Build tokenizer-v7: ByteLevel BPE tokenizer for SparkNet-410M.
+Build tokenizer-v8: ByteLevel BPE tokenizer for SparkNet-410M.
 
 Replaces tokenizer-v6 (SentencePiece). The root cause of the v2 GGUF deployment
 failure was SentencePiece absorbing \\n as whitespace while llama.cpp emits an
@@ -18,11 +18,11 @@ Including <|im_start|> and <|im_end|> in pretraining vocab means their embedding
 are trained on billions of tokens before SFT rather than being initialized to the
 mean embedding at fine-tune time.
 
-Output: tokenizer-v7/  (PreTrainedTokenizerFast-compatible HF directory)
+Output: tokenizer-v8/  (PreTrainedTokenizerFast-compatible HF directory)
 
 Usage:
   python build_tokenizer.py
-  python build_tokenizer.py --vocab-size 32000 --samples 2000000 --output tokenizer-v7
+  python build_tokenizer.py --vocab-size 32000 --samples 2000000 --output tokenizer-v8
 """
 
 import argparse
@@ -46,6 +46,7 @@ SPECIAL_TOKENS = [
     "<|im_start|>",
     "<|im_end|>",
 ]
+CHATML_SPECIAL_TOKENS = ["<|im_start|>", "<|im_end|>"]
 
 # Mirrors v3 pretraining mix so tokenizer reflects actual data distribution
 DATA_SOURCES = [
@@ -75,7 +76,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vocab-size", type=int, default=32000)
     parser.add_argument("--samples", type=int, default=2_000_000,
                         help="Number of text samples to feed to the BPE trainer.")
-    parser.add_argument("--output", type=str, default="tokenizer-v7")
+    parser.add_argument("--output", type=str, default="tokenizer-v8")
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
@@ -126,6 +127,7 @@ def main():
     trainer = BpeTrainer(
         vocab_size=args.vocab_size,
         special_tokens=SPECIAL_TOKENS,
+        initial_alphabet=ByteLevel.alphabet(),
         min_frequency=2,
         show_progress=True,
     )
@@ -143,6 +145,7 @@ def main():
         eos_token="<|end_of_text|>",
         pad_token="<|end_of_text|>",
         unk_token=None,
+        additional_special_tokens=CHATML_SPECIAL_TOKENS,
         model_max_length=1024,
     )
 
@@ -150,14 +153,43 @@ def main():
     # the GGUF automatically — no --chat-template-file flag needed at serve time.
     fast_tok.chat_template = CHATML_TEMPLATE
 
+    validate_tokenizer(fast_tok)
     fast_tok.save_pretrained(str(output_dir))
     print(f"Tokenizer saved to {output_dir}")
 
-    # Smoke test
+
+def validate_tokenizer(fast_tok: PreTrainedTokenizerFast):
+    vocab = fast_tok.get_vocab()
+
+    expected_ids = {
+        "<|begin_of_text|>": 0,
+        "<|end_of_text|>": 1,
+        "<|im_start|>": 2,
+        "<|im_end|>": 3,
+    }
+    for token, expected_id in expected_ids.items():
+        actual_id = vocab.get(token)
+        if actual_id != expected_id:
+            raise RuntimeError(f"{token} id mismatch: expected {expected_id}, got {actual_id}")
+
+    additional = set(fast_tok.additional_special_tokens)
+    missing_additional = [tok for tok in CHATML_SPECIAL_TOKENS if tok not in additional]
+    if missing_additional:
+        raise RuntimeError(f"ChatML tokens not registered as additional specials: {missing_additional}")
+
+    missing_byte_tokens = [tok for tok in ByteLevel.alphabet() if tok not in vocab]
+    if missing_byte_tokens:
+        sample = ", ".join(repr(tok) for tok in missing_byte_tokens[:8])
+        raise RuntimeError(f"ByteLevel alphabet missing {len(missing_byte_tokens)} token(s): {sample}")
+
+    if not fast_tok.chat_template:
+        raise RuntimeError("chat_template missing from tokenizer_config.json")
+
     test_cases = [
         "Hello, world!\nThis is a test.",
         "<|im_start|>user\nWhat is the capital of France?<|im_end|>",
         "def fibonacci(n):\n    if n <= 1:\n        return n",
+        "Unicode smoke: café, π, 中文, emoji-style bytes.",
     ]
     print("\nSmoke test:")
     for text in test_cases:
@@ -167,8 +199,8 @@ def main():
         print(f"  [{match}] {repr(text[:60])}")
         if decoded != text:
             print(f"         decoded: {repr(decoded[:60])}")
+            raise RuntimeError(f"Tokenizer roundtrip failed for {repr(text[:60])}")
 
-    vocab = fast_tok.get_vocab()
     print("\nSpecial token IDs:")
     for tok in SPECIAL_TOKENS:
         print(f"  {tok!r:30s} -> {vocab.get(tok, 'NOT FOUND')}")
