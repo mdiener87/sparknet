@@ -66,7 +66,7 @@ from hparam_utils import (
 # Enough tokens to clearly see warmup end and post-warmup behavior
 # At 1M tokens/step: 500 steps. At 1% warmup: 5 warmup steps → LR hits target at step 5.
 # At 3% warmup: 15 steps. We need to watch at least 50–100 steps post-warmup.
-TARGET_TOKENS = 500_000_000   # 500M tokens per run
+TARGET_TOKENS = 150_000_000   # 150M tokens — warmup instability shows in the first ~5-10% of training
 BLOCK_SIZE = 1024
 PER_DEVICE_BATCH = 32
 LOG_EVERY_STEPS = 10

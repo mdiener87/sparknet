@@ -161,12 +161,27 @@ def analyze_range_test(records: list) -> dict:
     min_idx = smoothed.index(min_loss)
     sweet_spot_lr = lrs[min_idx]
 
-    # Detect ceiling: raw spike OR sustained smooth rise after the minimum
+    # Extract grad_norm series aligned to the same steps as losses/lrs
+    grad_norms = [r.get("grad_norm") for r in records if r["loss"] is not None and r["lr"] is not None]
+
+    # Compute the baseline grad_norm as median of the first half of the run
+    # (before any potential instability), for relative comparison
+    mid = max(1, len(grad_norms) // 2)
+    baseline_gnorm = sorted(g for g in grad_norms[:mid] if g is not None)[mid // 2]
+
+    # Detect ceiling: any of three signals after the loss minimum
+    #   (a) grad_norm spike: norm jumps to 3× baseline in a single step
+    #       This is the most reliable signal — Adam's gradient is telling you the
+    #       parameter update just went somewhere catastrophic.
+    #   (b) raw loss spike: single step loss > 1.15× minimum (tight threshold)
+    #   (c) smooth sustained rise: EMA loss > 1.30× minimum
     ceiling_lr = None
     for i in range(min_idx, len(smoothed)):
-        raw_spike   = losses[i]   > min_loss * 2.5   # sharp single-step explosion
-        smooth_rise = smoothed[i] > min_loss * 1.30  # gradual sustained rise
-        if raw_spike or smooth_rise:
+        gnorm = grad_norms[i]
+        gnorm_spike  = gnorm is not None and gnorm > baseline_gnorm * 3.0
+        raw_spike    = losses[i] > min_loss * 1.15
+        smooth_rise  = smoothed[i] > min_loss * 1.30
+        if gnorm_spike or raw_spike or smooth_rise:
             ceiling_lr = lrs[i]
             break
 

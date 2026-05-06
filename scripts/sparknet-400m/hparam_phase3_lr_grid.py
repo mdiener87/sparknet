@@ -73,7 +73,7 @@ from hparam_utils import (
     setup_env,
 )
 
-TARGET_TOKENS = 200_000_000   # 200M tokens per run
+TARGET_TOKENS = 100_000_000   # 100M tokens per run — enough to see loss curve ordering
 BLOCK_SIZE = 1024
 PER_DEVICE_BATCH = 32
 WARMUP_RATIO = 0.01

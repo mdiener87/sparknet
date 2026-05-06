@@ -50,10 +50,19 @@ def load_sparknet_tokenizer(tokenizer_path: str) -> LlamaTokenizer:
 
 def list_shards(train_root: str) -> List[str]:
     root = Path(train_root)
-    shards = sorted(str(p) for p in root.glob("shard-*") if p.is_dir())
-    if not shards:
-        raise FileNotFoundError(f"No shard-* dirs under: {train_root}")
-    return shards
+    all_dirs = sorted(p for p in root.glob("shard-*") if p.is_dir())
+    # A valid HF Dataset shard contains dataset_info.json or state.json
+    valid, skipped = [], []
+    for p in all_dirs:
+        if (p / "dataset_info.json").exists() or (p / "state.json").exists():
+            valid.append(str(p))
+        else:
+            skipped.append(p.name)
+    if skipped:
+        print(f"[Data] Skipping {len(skipped)} empty/invalid shard(s): {skipped}")
+    if not valid:
+        raise FileNotFoundError(f"No valid shard-* dirs under: {train_root}")
+    return valid
 
 
 def load_prepacked(

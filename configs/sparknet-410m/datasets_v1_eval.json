@@ -1,0 +1,58 @@
+{
+  "_comment": "Held-out eval shard. Same source mix as datasets_v1.json but seeded differently and written to a separate output. Build this BEFORE building the training shards so the seed offset keeps train/eval populations distinct.",
+  "seed": 137,
+  "tokenizer_path": "./tokenizer-v7",
+  "output_root": "datasets/sparknet-v3-pretrain-eval",
+  "block_size": 1024,
+  "shard_tokens": 10000000,
+  "writer_batch_size": 50000,
+  "report_tokens_every": 2000000,
+  "sources": [
+    {
+      "name": "HuggingFaceFW/fineweb-edu",
+      "split": "train",
+      "prob": 0.44,
+      "text_fields": ["text"]
+    },
+    {
+      "name": "mlfoundations/dclm-baseline-1.0",
+      "split": "train",
+      "prob": 0.13,
+      "text_fields": ["text"]
+    },
+    {
+      "name": "HuggingFaceFW/finepdfs",
+      "config_name": "eng_Latn",
+      "split": "train",
+      "prob": 0.11,
+      "text_fields": ["text"]
+    },
+    {
+      "name": "HuggingFaceFW/finewiki",
+      "config_name": "en",
+      "split": "train",
+      "prob": 0.10,
+      "text_fields": ["text"]
+    },
+    {
+      "name": "HuggingFaceTB/smollm-corpus",
+      "config_name": "cosmopedia-v2",
+      "split": "train",
+      "prob": 0.10,
+      "text_fields": ["text"]
+    },
+    {
+      "name": "HuggingFaceTB/smollm-corpus",
+      "config_name": "python-edu",
+      "split": "train",
+      "prob": 0.07,
+      "text_fields": ["text"]
+    },
+    {
+      "name": "open-web-math/open-web-math",
+      "split": "train",
+      "prob": 0.05,
+      "text_fields": ["text"]
+    }
+  ]
+}
