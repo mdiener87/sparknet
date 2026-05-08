@@ -1,0 +1,9 @@
+{
+  "additional_special_tokens": [
+    "<|im_start|>",
+    "<|im_end|>"
+  ],
+  "bos_token": "<|begin_of_text|>",
+  "eos_token": "<|end_of_text|>",
+  "pad_token": "<|end_of_text|>"
+}

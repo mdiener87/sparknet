@@ -47,11 +47,10 @@
       "text_fields": ["text"]
     },
     {
-      "name": "HuggingFaceTB/smollm-corpus",
-      "config_name": "python-edu",
+      "name": "kejian/codesearchnet-python-raw",
       "split": "train",
       "prob": 0.07,
-      "text_fields": ["text"]
+      "text_fields": ["code"]
     },
     {
       "name": "open-web-math/open-web-math",

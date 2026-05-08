@@ -313,11 +313,18 @@ def source_text_iterator(source: Dict) -> Iterator[str]:
             with source_timeout(timeout_seconds, f"Opening {name}"):
                 dataset = load_source_dataset(source)
             row_iter = iter(dataset)
+            rows_seen = 0
+            texts_seen = 0
+            first_row_keys: List[str] = []
             while True:
                 with source_timeout(timeout_seconds, f"Reading {name}"):
                     row = next(row_iter)
                 if isinstance(row, dict):
+                    rows_seen += 1
+                    if not first_row_keys:
+                        first_row_keys = list(row.keys())
                     for text in extract_texts(row, source):
+                        texts_seen += 1
                         stripped = text.strip()
                         if not stripped:
                             continue
@@ -338,6 +345,12 @@ def source_text_iterator(source: Dict) -> Iterator[str]:
                             else:
                                 yield chunk
         except StopIteration:
+            if rows_seen > 0 and texts_seen == 0:
+                fields = source.get("text_fields") or FALLBACK_TEXT_FIELDS
+                raise ValueError(
+                    f"Source {name} produced rows but no text for fields {fields}. "
+                    f"First row keys: {first_row_keys}"
+                )
             return
         except Exception as err:
             if not is_transient_error(err):
@@ -359,11 +372,17 @@ def text_stream(sources: List[Dict], rng: random.Random) -> Iterator[str]:
     weights = [float(s["prob"]) for s in sources]
     iters = {k: iter(source_text_iterator(sources[int(k)])) for k in keys}
     while True:
+        if not keys:
+            raise RuntimeError("All dataset sources were exhausted before the shard reached its target token count.")
         key = rng.choices(keys, weights=weights, k=1)[0]
         try:
             yield next(iters[key])
         except StopIteration:
-            iters[key] = iter(source_text_iterator(sources[int(key)]))
+            idx = keys.index(key)
+            print(f"[SourceDone] {source_name(sources[int(key)])}", flush=True)
+            keys.pop(idx)
+            weights.pop(idx)
+            iters.pop(key, None)
 
 
 def tokenized_stream(pool: Pool, stream: Iterator[str], max_pending: int) -> Iterator[Optional[List[int]]]:

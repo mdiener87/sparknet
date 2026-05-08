@@ -28,7 +28,7 @@ Usage:
 import argparse
 import random
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Sequence
 
 from datasets import load_dataset
 from tokenizers import Tokenizer
@@ -50,13 +50,13 @@ CHATML_SPECIAL_TOKENS = ["<|im_start|>", "<|im_end|>"]
 
 # Mirrors v3 pretraining mix so tokenizer reflects actual data distribution
 DATA_SOURCES = [
-    ("HuggingFaceFW/fineweb-edu",         None,           "train", 0.44),
-    ("mlfoundations/dclm-baseline-1.0",   None,           "train", 0.13),
-    ("HuggingFaceFW/finepdfs",            "eng_Latn",     "train", 0.11),
-    ("HuggingFaceFW/finewiki",            "en",           "train", 0.10),
-    ("HuggingFaceTB/smollm-corpus",       "cosmopedia-v2","train", 0.10),
-    ("HuggingFaceTB/smollm-corpus",       "python-edu",   "train", 0.07),
-    ("open-web-math/open-web-math",        None,           "train", 0.05),
+    ("HuggingFaceFW/fineweb-edu",         None,           "train", 0.44, ("text",)),
+    ("mlfoundations/dclm-baseline-1.0",   None,           "train", 0.13, ("text",)),
+    ("HuggingFaceFW/finepdfs",            "eng_Latn",     "train", 0.11, ("text",)),
+    ("HuggingFaceFW/finewiki",            "en",           "train", 0.10, ("text",)),
+    ("HuggingFaceTB/smollm-corpus",       "cosmopedia-v2","train", 0.10, ("text",)),
+    ("kejian/codesearchnet-python-raw",   None,           "train", 0.07, ("code",)),
+    ("open-web-math/open-web-math",        None,           "train", 0.05, ("text",)),
 ]
 
 # Standard ChatML template — embedded in tokenizer_config.json so llama.cpp
@@ -81,15 +81,24 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def extract_first_text(row: dict, fields: Sequence[str]) -> str:
+    for field in fields:
+        value = row.get(field)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
 def stream_texts(n_samples: int, seed: int) -> Iterator[str]:
     rng = random.Random(seed)
     names = [s[0] for s in DATA_SOURCES]
     configs = [s[1] for s in DATA_SOURCES]
     splits = [s[2] for s in DATA_SOURCES]
     weights = [s[3] for s in DATA_SOURCES]
+    fields = [s[4] for s in DATA_SOURCES]
 
     iterators = {}
-    for i, (name, cfg_name, split, _) in enumerate(DATA_SOURCES):
+    for i, (name, cfg_name, split, _, _) in enumerate(DATA_SOURCES):
         ds = load_dataset(name, name=cfg_name, split=split, streaming=True, trust_remote_code=False)
         iterators[i] = iter(ds)
 
@@ -104,9 +113,9 @@ def stream_texts(n_samples: int, seed: int) -> Iterator[str]:
             iterators[idx] = iter(ds)
             row = next(iterators[idx])
 
-        text = row.get("text", "")
-        if isinstance(text, str) and text.strip():
-            yield text.strip()
+        text = extract_first_text(row, fields[idx])
+        if text:
+            yield text
             emitted += 1
             if emitted % 100_000 == 0:
                 print(f"  Streamed {emitted:,} / {n_samples:,} samples")

@@ -18,7 +18,7 @@ USAGE:
   python3 hparam_run_all.py --grad-accum 32
 
   # Include the legacy Phase 2 range test before the screen
-  python3 hparam_run_all.py --grad-accum 32 --start-from 2
+  python3 hparam_run_all.py --grad-accum 32 --start-from 2 --run-phase4
 
   # Resume from Phase 3 screens
   python3 hparam_run_all.py --grad-accum 32 --start-from 3
@@ -70,6 +70,12 @@ def run_phase(cmd: list, phase_name: str):
         sys.exit(result.returncode)
 
     print(f"\n[{ts()}] {phase_name} complete.")
+
+
+def add_optional_arg(cmd: list, name: str, value):
+    if value is not None:
+        cmd += [name, str(value)]
+    return cmd
 
 
 def load_json(path: Path) -> dict:
@@ -133,7 +139,14 @@ def main():
     )
     parser.add_argument(
         "--skip-phase4", action="store_true",
-        help="Skip legacy warmup sensitivity phase",
+        dest="skip_phase4",
+        default=True,
+        help="Skip legacy warmup sensitivity phase (default)",
+    )
+    parser.add_argument(
+        "--run-phase4", action="store_false",
+        dest="skip_phase4",
+        help="Run legacy Phase 4 warmup sensitivity after the LR screen",
     )
     parser.add_argument(
         "--skip-canary", action="store_true",
@@ -149,6 +162,24 @@ def main():
     parser.add_argument(
         "--limit-shards", type=int, default=None,
         help="Limit dataset shards (useful for a quick smoke test)",
+    )
+    parser.add_argument(
+        "--phase3-target-tokens",
+        type=int,
+        default=None,
+        help="Override Phase 3 screen tokens per LR (for smoke tests)",
+    )
+    parser.add_argument(
+        "--phase4-target-tokens",
+        type=int,
+        default=None,
+        help="Override legacy Phase 4 tokens per run (for smoke tests)",
+    )
+    parser.add_argument(
+        "--canary-target-tokens",
+        type=int,
+        default=None,
+        help="Override canary target tokens (for smoke tests)",
     )
     args = parser.parse_args()
 
@@ -192,17 +223,13 @@ def main():
     # Phase 3 — 3-point LR grid
     # ---------------------------------------------------------------- #
     if args.start_from <= 3:
-        if ceiling_lr is None:
-            # Wasn't set by Phase 2 (start_from=3 with no --ceiling-lr)
-            ceiling_lr = read_ceiling_lr()
-            print(f"  ceiling_lr from saved Phase 2 output: {ceiling_lr:.2e}")
-
         if ceiling_lr is not None:
             phase3_cmd = [python, str(SCRIPT_DIR / "hparam_phase3_lr_grid.py"),
                           "--ceiling-lr", str(ceiling_lr)] + eval_common
         else:
             phase3_cmd = [python, str(SCRIPT_DIR / "hparam_phase3_lr_grid.py"),
                           "--lr-list"] + [str(v) for v in args.screen_lrs] + eval_common
+        add_optional_arg(phase3_cmd, "--target-tokens", args.phase3_target_tokens)
         run_phase(phase3_cmd, "Phase 3 — LR Screen Grid")
         winner_lr = read_winner_lr()
         print(f"  winner_lr from Phase 3: {winner_lr:.2e}")
@@ -219,11 +246,10 @@ def main():
             print(f"\nPhase 4 skipped: winner LR {winner_lr:.2e} is below 2e-4.")
             print("At low LR, warmup sensitivity is negligible. Keep warmup_ratio=0.02.")
         else:
-            run_phase(
-                [python, str(SCRIPT_DIR / "hparam_phase4_warmup.py"),
-                 "--lr", str(winner_lr)] + eval_common,
-                "Phase 4 — Warmup Sensitivity",
-            )
+            phase4_cmd = [python, str(SCRIPT_DIR / "hparam_phase4_warmup.py"),
+                          "--lr", str(winner_lr)] + eval_common
+            add_optional_arg(phase4_cmd, "--target-tokens", args.phase4_target_tokens)
+            run_phase(phase4_cmd, "Phase 4 — Warmup Sensitivity")
 
     # ---------------------------------------------------------------- #
     # Canary — production scheduler confirmation
@@ -241,6 +267,7 @@ def main():
         ]
         if args.limit_shards:
             canary_cmd += ["--limit-shards", str(args.limit_shards)]
+        add_optional_arg(canary_cmd, "--target-tokens", args.canary_target_tokens)
         run_phase(canary_cmd, "Canary — 250M Production-Scheduler LR Check")
 
     # ---------------------------------------------------------------- #
