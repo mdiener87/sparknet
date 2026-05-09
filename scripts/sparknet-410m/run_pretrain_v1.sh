@@ -58,8 +58,8 @@ for shard in "$TRAIN_ROOT"/shard-*; do
     exit 1
   fi
 done
-if [ "$SHARD_COUNT" -ne 20 ]; then
-  echo "ERROR: Expected exactly 20 complete train shards under $TRAIN_ROOT, found $SHARD_COUNT"
+if [ "$SHARD_COUNT" -ne 21 ]; then
+  echo "ERROR: Expected exactly 21 complete train shards under $TRAIN_ROOT, found $SHARD_COUNT"
   exit 1
 fi
 echo "Training shards: $SHARD_COUNT"

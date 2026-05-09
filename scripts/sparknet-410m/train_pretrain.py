@@ -14,8 +14,8 @@ Key changes from the sparknet-400m scripts:
       3. Last-3 regular step checkpoints (power-failure resume)
   - Cosine schedule with min_lr floor (cosine_with_min_lr, floor = 0.1 × peak LR).
     Plain cosine to zero over a 16-day run wastes the final ~10% of training steps.
-  - Learning rate 1.83e-3 anchored to Phase 2 LR range test (ceiling / 3).
-    Phase 3 grid runs at 96 steps were invalid due to cosine schedule collapse.
+  - Learning rate 5.5e-4 selected by the 410M LR grid and production-scheduler
+    canaries.
   - Architecture: 32 layers, intermediate_size=2816 → ~410M parameters.
 
 Usage:
@@ -78,7 +78,7 @@ class RunConfig:
     per_device_train_batch_size: int = 32
     grad_accum: int = 32
 
-    learning_rate: float = 1.83e-3
+    learning_rate: float = 5.5e-4
     weight_decay: float = 0.1
     warmup_ratio: float = 0.02
     cosine_min_lr_ratio: float = 0.1
