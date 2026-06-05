@@ -58,9 +58,11 @@ def is_complete_shard(path: Path) -> bool:
 
 
 def _block_hash(input_ids) -> bytes:
-    # input_ids is a torch tensor or list of ints; bytes() of the int list is
-    # enough to fingerprint a fixed-length block. 16 bytes keeps the set light.
-    return hashlib.sha256(bytes(int(t) & 0xFFFF for t in input_ids).hex().encode()).digest()[:16]
+    # input_ids is a list (or tensor) of token ids; vocab is 32k so each id
+    # fits in 2 little-endian bytes. Concatenate and hash; 16 bytes of digest
+    # keeps the dedup set light while making collisions astronomically rare.
+    payload = b"".join(int(t).to_bytes(2, "little") for t in input_ids)
+    return hashlib.sha256(payload).digest()[:16]
 
 
 def sample_indices(n_rows: int, sample: int):
