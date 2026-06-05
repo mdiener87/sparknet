@@ -5,6 +5,7 @@
   "tokenizer_path": "./tokenizer-v8",
   "train_root": "datasets/sparknet-125m-v1-pretrain",
   "eval_root": "datasets/sparknet-125m-v1-pretrain-eval",
+  "eval_suite_root": "datasets/sparknet-125m-v1-pretrain-eval-bysource",
   "block_size": 1024,
 
   "hidden_size": 1024,

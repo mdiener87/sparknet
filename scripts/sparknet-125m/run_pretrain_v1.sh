@@ -73,6 +73,28 @@ if [ ! -f "$EVAL_ROOT/shard-000/dataset_info.json" ] || [ ! -f "$EVAL_ROOT/shard
 fi
 echo "Eval shard: OK"
 
+# Per-dataset eval suite (per-source held-out shards + canary probe). Built by
+# build_eval_suite.py; loaded as a dict eval_dataset so the run reports
+# eval_<source>_loss alongside the aggregate eval_all_loss.
+CONFIG_EVAL_SUITE="$(python -c 'import json,sys; print(json.load(open(sys.argv[1])).get("eval_suite_root") or "")' "$CONFIG")"
+if [ -n "$CONFIG_EVAL_SUITE" ]; then
+  EVAL_SUITE_ROOT="$PROJECT_ROOT/$CONFIG_EVAL_SUITE"
+  EXPECT_SUBSETS=8   # 7 sources + canary
+  SUBSET_COUNT=0
+  for sub in "$EVAL_SUITE_ROOT"/*/; do
+    [ -d "$sub" ] || continue
+    if [ -f "$sub/shard-000/dataset_info.json" ] && [ -f "$sub/shard-000/state.json" ]; then
+      SUBSET_COUNT=$((SUBSET_COUNT + 1))
+    fi
+  done
+  if [ "$SUBSET_COUNT" -ne "$EXPECT_SUBSETS" ]; then
+    echo "ERROR: eval suite at $EVAL_SUITE_ROOT has $SUBSET_COUNT/$EXPECT_SUBSETS complete subsets"
+    echo "       Run: python scripts/sparknet-125m/build_eval_suite.py"
+    exit 1
+  fi
+  echo "Eval suite: $SUBSET_COUNT subsets OK"
+fi
+
 # Duplication guard — the 410m-v1 run trained 16 days on ~21x duplicated data
 # before anyone noticed. Never launch without confirming the shards are disjoint.
 echo "Verifying shard disjointness..."
