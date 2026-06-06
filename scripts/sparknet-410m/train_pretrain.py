@@ -300,8 +300,10 @@ class SmartCheckpointCallback(TrainerCallback):
         # Cardinal snapshot
         if step in self.token_step_map and step in self._triggered_cardinal:
             token_count = self.token_step_map[step]
-            n_b = token_count // 1_000_000_000
-            cardinal = self.output_dir / f"checkpoint-{n_b}B-tokens"
+            # One decimal so fractional-B milestones stay distinct: integer
+            # floor would label 1.5B as "1B" and collide 2.5B with 2.0B.
+            label = f"{token_count / 1_000_000_000:.1f}B-tokens"
+            cardinal = self.output_dir / f"checkpoint-{label}"
             if not cardinal.exists() and ckpt.exists():
                 shutil.copytree(str(ckpt), str(cardinal))
                 print(f"[Checkpoint] Cardinal snapshot → {cardinal.name}")
@@ -337,6 +339,30 @@ class SmartCheckpointCallback(TrainerCallback):
             if ckpt not in protected:
                 shutil.rmtree(str(ckpt), ignore_errors=True)
                 print(f"[Checkpoint] Pruned {ckpt.name}")
+
+
+# ---------------------------------------------------------------------------
+# Trainer
+# ---------------------------------------------------------------------------
+
+class FilteredTrainer(Trainer):
+    """Trainer that drops HF's auto eval timing metrics before logging.
+
+    Every evaluate() emits eval_<name>_runtime / _samples_per_second /
+    _steps_per_second — throughput scalars with no learning signal that clutter
+    TensorBoard (and the logs). We strip them in log(), which all metrics flow
+    through, so only losses and training stats are recorded. Purely cosmetic;
+    training is unaffected. Train-level timings (train_runtime, ...) are kept.
+    """
+
+    _DROP_SUFFIXES = ("_runtime", "_samples_per_second", "_steps_per_second")
+
+    def log(self, logs, *args, **kwargs):
+        logs = {
+            k: v for k, v in logs.items()
+            if not (k.startswith("eval_") and k.endswith(self._DROP_SUFFIXES))
+        }
+        return super().log(logs, *args, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -502,7 +528,7 @@ def main():
     if cfg.do_sample_generations:
         callbacks.append(SampleGenCallback(tok, prompts, every_eval=cfg.sample_gen_every_eval))
 
-    trainer = Trainer(
+    trainer = FilteredTrainer(
         model=model,
         args=train_args,
         train_dataset=train_ds,
