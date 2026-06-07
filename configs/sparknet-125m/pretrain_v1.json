@@ -1,0 +1,47 @@
+{
+  "run_name": "sparknet-125m-v1",
+  "seed": 42,
+
+  "tokenizer_path": "./tokenizer-v8",
+  "train_root": "datasets/sparknet-125m-v1-pretrain",
+  "eval_root": "datasets/sparknet-125m-v1-pretrain-eval",
+  "eval_suite_root": "datasets/sparknet-125m-v1-pretrain-eval-bysource",
+  "block_size": 1024,
+
+  "hidden_size": 1024,
+  "num_layers": 8,
+  "num_heads": 16,
+  "num_kv_heads": 8,
+  "intermediate_size": 2816,
+  "rope_theta": 500000.0,
+  "rms_norm_eps": 1e-05,
+
+  "bf16": true,
+  "per_device_train_batch_size": 32,
+  "grad_accum": 32,
+
+  "learning_rate": 8e-4,
+  "weight_decay": 0.1,
+  "warmup_ratio": 0.02,
+  "cosine_min_lr_ratio": 0.1,
+  "scheduler": "cosine_with_min_lr",
+  "max_grad_norm": 1.0,
+
+  "target_tokens": 2500000000,
+  "checkpoint_tokens": [1500000000, 2000000000, 2500000000],
+  "keep_best_checkpoints": 3,
+  "keep_last_checkpoints": 3,
+
+  "logging_steps": 50,
+  "eval_steps": 250,
+  "save_steps": 250,
+
+  "dataloader_num_workers": 16,
+  "dataloader_prefetch_factor": 4,
+
+  "limit_shards": null,
+  "resume_from": null,
+  "do_sample_generations": true,
+  "sample_gen_every_eval": true,
+  "sample_prompts_path": null
+}
