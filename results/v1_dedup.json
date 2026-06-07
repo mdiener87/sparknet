@@ -1,0 +1,392 @@
+{
+  "config": "configs/sparknet-410m/datasets_v1.json",
+  "shards_analyzed": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20
+  ],
+  "limit_per_shard": null,
+  "total_accepted_chunks": 8212657,
+  "total_distinct_chunks": 393722,
+  "duplication_factor": 20.859,
+  "sample_size": 2000,
+  "mean_chars_per_chunk": 6204.6,
+  "chars_per_token_heuristic": 4.0,
+  "mean_tokens_per_chunk_est": 1551.1,
+  "estimated_unique_tokens": 610721487,
+  "training_tokens_total": 10500000000,
+  "effective_epochs": 17.1928,
+  "per_source": {
+    "HuggingFaceFW/fineweb-edu": {
+      "total_chunks": 3612370,
+      "distinct_chunks": 172613,
+      "duplication_factor": 20.9276
+    },
+    "mlfoundations/dclm-baseline-1.0": {
+      "total_chunks": 1067435,
+      "distinct_chunks": 51361,
+      "duplication_factor": 20.783
+    },
+    "HuggingFaceFW/finepdfs[eng_Latn]": {
+      "total_chunks": 903492,
+      "distinct_chunks": 43300,
+      "duplication_factor": 20.8659
+    },
+    "HuggingFaceTB/smollm-corpus[cosmopedia-v2]": {
+      "total_chunks": 822399,
+      "distinct_chunks": 39489,
+      "duplication_factor": 20.826
+    },
+    "HuggingFaceFW/finewiki[en]": {
+      "total_chunks": 819940,
+      "distinct_chunks": 39377,
+      "duplication_factor": 20.8228
+    },
+    "kejian/codesearchnet-python-raw": {
+      "total_chunks": 574991,
+      "distinct_chunks": 27586,
+      "duplication_factor": 20.8436
+    },
+    "open-web-math/open-web-math": {
+      "total_chunks": 412030,
+      "distinct_chunks": 19996,
+      "duplication_factor": 20.6056
+    }
+  },
+  "shard_results": [
+    {
+      "shard_id": 0,
+      "chunks_replayed": 390641,
+      "chunks_target": 390641,
+      "elapsed_seconds": 100.3,
+      "per_source_total": {
+        "HuggingFaceFW/finepdfs[eng_Latn]": 43217,
+        "HuggingFaceFW/fineweb-edu": 171585,
+        "HuggingFaceFW/finewiki[en]": 38972,
+        "kejian/codesearchnet-python-raw": 27256,
+        "mlfoundations/dclm-baseline-1.0": 50636,
+        "HuggingFaceTB/smollm-corpus[cosmopedia-v2]": 39317,
+        "open-web-math/open-web-math": 19658
+      }
+    },
+    {
+      "shard_id": 1,
+      "chunks_replayed": 391934,
+      "chunks_target": 391934,
+      "elapsed_seconds": 87.4,
+      "per_source_total": {
+        "HuggingFaceFW/fineweb-edu": 172614,
+        "HuggingFaceFW/finewiki[en]": 39048,
+        "mlfoundations/dclm-baseline-1.0": 50892,
+        "HuggingFaceFW/finepdfs[eng_Latn]": 42695,
+        "HuggingFaceTB/smollm-corpus[cosmopedia-v2]": 39492,
+        "kejian/codesearchnet-python-raw": 27558,
+        "open-web-math/open-web-math": 19635
+      }
+    },
+    {
+      "shard_id": 2,
+      "chunks_replayed": 391054,
+      "chunks_target": 391054,
+      "elapsed_seconds": 83.3,
+      "per_source_total": {
+        "HuggingFaceFW/fineweb-edu": 171613,
+        "mlfoundations/dclm-baseline-1.0": 50871,
+        "HuggingFaceTB/smollm-corpus[cosmopedia-v2]": 39066,
+        "open-web-math/open-web-math": 19996,
+        "HuggingFaceFW/finewiki[en]": 39041,
+        "HuggingFaceFW/finepdfs[eng_Latn]": 42894,
+        "kejian/codesearchnet-python-raw": 27573
+      }
+    },
+    {
+      "shard_id": 3,
+      "chunks_replayed": 391149,
+      "chunks_target": 391149,
+      "elapsed_seconds": 83.8,
+      "per_source_total": {
+        "HuggingFaceFW/fineweb-edu": 172305,
+        "mlfoundations/dclm-baseline-1.0": 50891,
+        "HuggingFaceFW/finewiki[en]": 39144,
+        "HuggingFaceFW/finepdfs[eng_Latn]": 42910,
+        "HuggingFaceTB/smollm-corpus[cosmopedia-v2]": 39164,
+        "kejian/codesearchnet-python-raw": 27156,
+        "open-web-math/open-web-math": 19579
+      }
+    },
+    {
+      "shard_id": 4,
+      "chunks_replayed": 390867,
+      "chunks_target": 390867,
+      "elapsed_seconds": 81.8,
+      "per_source_total": {
+        "kejian/codesearchnet-python-raw": 27430,
+        "HuggingFaceFW/fineweb-edu": 171668,
+        "HuggingFaceFW/finepdfs[eng_Latn]": 43203,
+        "HuggingFaceTB/smollm-corpus[cosmopedia-v2]": 39119,
+        "mlfoundations/dclm-baseline-1.0": 50623,
+        "open-web-math/open-web-math": 19687,
+        "HuggingFaceFW/finewiki[en]": 39137
+      }
+    },
+    {
+      "shard_id": 5,
+      "chunks_replayed": 390899,
+      "chunks_target": 390899,
+      "elapsed_seconds": 83.0,
+      "per_source_total": {
+        "HuggingFaceFW/fineweb-edu": 171956,
+        "mlfoundations/dclm-baseline-1.0": 50677,
+        "open-web-math/open-web-math": 19639,
+        "kejian/codesearchnet-python-raw": 27319,
+        "HuggingFaceFW/finewiki[en]": 39120,
+        "HuggingFaceFW/finepdfs[eng_Latn]": 43127,
+        "HuggingFaceTB/smollm-corpus[cosmopedia-v2]": 39061
+      }
+    },
+    {
+      "shard_id": 6,
+      "chunks_replayed": 391260,
+      "chunks_target": 391260,
+      "elapsed_seconds": 84.1,
+      "per_source_total": {
+        "mlfoundations/dclm-baseline-1.0": 50762,
+        "HuggingFaceFW/fineweb-edu": 172596,
+        "HuggingFaceFW/finewiki[en]": 39035,
+        "kejian/codesearchnet-python-raw": 27450,
+        "open-web-math/open-web-math": 19599,
+        "HuggingFaceTB/smollm-corpus[cosmopedia-v2]": 38881,
+        "HuggingFaceFW/finepdfs[eng_Latn]": 42937
+      }
+    },
+    {
+      "shard_id": 7,
+      "chunks_replayed": 391394,
+      "chunks_target": 391394,
+      "elapsed_seconds": 83.7,
+      "per_source_total": {
+        "HuggingFaceFW/fineweb-edu": 172340,
+        "HuggingFaceFW/finewiki[en]": 38998,
+        "mlfoundations/dclm-baseline-1.0": 51171,
+        "HuggingFaceFW/finepdfs[eng_Latn]": 42921,
+        "HuggingFaceTB/smollm-corpus[cosmopedia-v2]": 39291,
+        "kejian/codesearchnet-python-raw": 27316,
+        "open-web-math/open-web-math": 19357
+      }
+    },
+    {
+      "shard_id": 8,
+      "chunks_replayed": 390781,
+      "chunks_target": 390781,
+      "elapsed_seconds": 83.9,
+      "per_source_total": {
+        "mlfoundations/dclm-baseline-1.0": 50754,
+        "HuggingFaceFW/fineweb-edu": 171713,
+        "HuggingFaceFW/finepdfs[eng_Latn]": 43197,
+        "open-web-math/open-web-math": 19601,
+        "HuggingFaceTB/smollm-corpus[cosmopedia-v2]": 39192,
+        "kejian/codesearchnet-python-raw": 27306,
+        "HuggingFaceFW/finewiki[en]": 39018
+      }
+    },
+    {
+      "shard_id": 9,
+      "chunks_replayed": 390501,
+      "chunks_target": 390501,
+      "elapsed_seconds": 83.7,
+      "per_source_total": {
+        "HuggingFaceFW/fineweb-edu": 171679,
+        "mlfoundations/dclm-baseline-1.0": 50845,
+        "HuggingFaceTB/smollm-corpus[cosmopedia-v2]": 39287,
+        "kejian/codesearchnet-python-raw": 27145,
+        "open-web-math/open-web-math": 19678,
+        "HuggingFaceFW/finewiki[en]": 38748,
+        "HuggingFaceFW/finepdfs[eng_Latn]": 43119
+      }
+    },
+    {
+      "shard_id": 10,
+      "chunks_replayed": 391065,
+      "chunks_target": 391065,
+      "elapsed_seconds": 81.9,
+      "per_source_total": {
+        "open-web-math/open-web-math": 19629,
+        "HuggingFaceFW/fineweb-edu": 172083,
+        "HuggingFaceFW/finewiki[en]": 39180,
+        "mlfoundations/dclm-baseline-1.0": 50823,
+        "kejian/codesearchnet-python-raw": 27262,
+        "HuggingFaceFW/finepdfs[eng_Latn]": 42974,
+        "HuggingFaceTB/smollm-corpus[cosmopedia-v2]": 39114
+      }
+    },
+    {
+      "shard_id": 11,
+      "chunks_replayed": 390624,
+      "chunks_target": 390624,
+      "elapsed_seconds": 83.3,
+      "per_source_total": {
+        "HuggingFaceFW/finepdfs[eng_Latn]": 43275,
+        "kejian/codesearchnet-python-raw": 27576,
+        "mlfoundations/dclm-baseline-1.0": 50935,
+        "HuggingFaceFW/finewiki[en]": 38789,
+        "HuggingFaceTB/smollm-corpus[cosmopedia-v2]": 38927,
+        "HuggingFaceFW/fineweb-edu": 171661,
+        "open-web-math/open-web-math": 19461
+      }
+    },
+    {
+      "shard_id": 12,
+      "chunks_replayed": 390717,
+      "chunks_target": 390717,
+      "elapsed_seconds": 82.0,
+      "per_source_total": {
+        "kejian/codesearchnet-python-raw": 27397,
+        "HuggingFaceFW/fineweb-edu": 171838,
+        "mlfoundations/dclm-baseline-1.0": 50585,
+        "open-web-math/open-web-math": 19498,
+        "HuggingFaceFW/finepdfs[eng_Latn]": 43300,
+        "HuggingFaceTB/smollm-corpus[cosmopedia-v2]": 39093,
+        "HuggingFaceFW/finewiki[en]": 39006
+      }
+    },
+    {
+      "shard_id": 13,
+      "chunks_replayed": 391751,
+      "chunks_target": 391751,
+      "elapsed_seconds": 83.5,
+      "per_source_total": {
+        "HuggingFaceFW/fineweb-edu": 172253,
+        "open-web-math/open-web-math": 19767,
+        "HuggingFaceFW/finewiki[en]": 39177,
+        "HuggingFaceTB/smollm-corpus[cosmopedia-v2]": 39355,
+        "HuggingFaceFW/finepdfs[eng_Latn]": 42681,
+        "mlfoundations/dclm-baseline-1.0": 50953,
+        "kejian/codesearchnet-python-raw": 27565
+      }
+    },
+    {
+      "shard_id": 14,
+      "chunks_replayed": 390956,
+      "chunks_target": 390956,
+      "elapsed_seconds": 82.9,
+      "per_source_total": {
+        "open-web-math/open-web-math": 19572,
+        "mlfoundations/dclm-baseline-1.0": 50911,
+        "HuggingFaceFW/finewiki[en]": 39379,
+        "HuggingFaceFW/fineweb-edu": 171534,
+        "HuggingFaceFW/finepdfs[eng_Latn]": 43126,
+        "kejian/codesearchnet-python-raw": 27273,
+        "HuggingFaceTB/smollm-corpus[cosmopedia-v2]": 39161
+      }
+    },
+    {
+      "shard_id": 15,
+      "chunks_replayed": 391261,
+      "chunks_target": 391261,
+      "elapsed_seconds": 84.5,
+      "per_source_total": {
+        "HuggingFaceFW/fineweb-edu": 171961,
+        "HuggingFaceFW/finepdfs[eng_Latn]": 43062,
+        "mlfoundations/dclm-baseline-1.0": 50934,
+        "open-web-math/open-web-math": 19534,
+        "kejian/codesearchnet-python-raw": 27522,
+        "HuggingFaceFW/finewiki[en]": 39146,
+        "HuggingFaceTB/smollm-corpus[cosmopedia-v2]": 39102
+      }
+    },
+    {
+      "shard_id": 16,
+      "chunks_replayed": 391778,
+      "chunks_target": 391778,
+      "elapsed_seconds": 86.4,
+      "per_source_total": {
+        "HuggingFaceFW/finepdfs[eng_Latn]": 42893,
+        "HuggingFaceFW/fineweb-edu": 172337,
+        "kejian/codesearchnet-python-raw": 27586,
+        "mlfoundations/dclm-baseline-1.0": 50705,
+        "HuggingFaceTB/smollm-corpus[cosmopedia-v2]": 39422,
+        "open-web-math/open-web-math": 19604,
+        "HuggingFaceFW/finewiki[en]": 39231
+      }
+    },
+    {
+      "shard_id": 17,
+      "chunks_replayed": 391105,
+      "chunks_target": 391105,
+      "elapsed_seconds": 86.7,
+      "per_source_total": {
+        "HuggingFaceFW/fineweb-edu": 172191,
+        "kejian/codesearchnet-python-raw": 27501,
+        "HuggingFaceTB/smollm-corpus[cosmopedia-v2]": 39005,
+        "HuggingFaceFW/finewiki[en]": 39037,
+        "HuggingFaceFW/finepdfs[eng_Latn]": 42951,
+        "mlfoundations/dclm-baseline-1.0": 50640,
+        "open-web-math/open-web-math": 19780
+      }
+    },
+    {
+      "shard_id": 18,
+      "chunks_replayed": 391096,
+      "chunks_target": 391096,
+      "elapsed_seconds": 82.9,
+      "per_source_total": {
+        "HuggingFaceFW/fineweb-edu": 172463,
+        "HuggingFaceFW/finepdfs[eng_Latn]": 42919,
+        "HuggingFaceTB/smollm-corpus[cosmopedia-v2]": 39182,
+        "mlfoundations/dclm-baseline-1.0": 50906,
+        "kejian/codesearchnet-python-raw": 27194,
+        "open-web-math/open-web-math": 19569,
+        "HuggingFaceFW/finewiki[en]": 38863
+      }
+    },
+    {
+      "shard_id": 19,
+      "chunks_replayed": 390861,
+      "chunks_target": 390861,
+      "elapsed_seconds": 84.3,
+      "per_source_total": {
+        "mlfoundations/dclm-baseline-1.0": 50544,
+        "HuggingFaceTB/smollm-corpus[cosmopedia-v2]": 39139,
+        "HuggingFaceFW/fineweb-edu": 172121,
+        "HuggingFaceFW/finewiki[en]": 39056,
+        "HuggingFaceFW/finepdfs[eng_Latn]": 43259,
+        "kejian/codesearchnet-python-raw": 27286,
+        "open-web-math/open-web-math": 19456
+      }
+    },
+    {
+      "shard_id": 20,
+      "chunks_replayed": 390963,
+      "chunks_target": 390963,
+      "elapsed_seconds": 85.8,
+      "per_source_total": {
+        "kejian/codesearchnet-python-raw": 27320,
+        "HuggingFaceFW/fineweb-edu": 171859,
+        "open-web-math/open-web-math": 19731,
+        "mlfoundations/dclm-baseline-1.0": 51377,
+        "HuggingFaceFW/finewiki[en]": 38815,
+        "HuggingFaceFW/finepdfs[eng_Latn]": 42832,
+        "HuggingFaceTB/smollm-corpus[cosmopedia-v2]": 39029
+      }
+    }
+  ],
+  "wall_time_seconds": 1779.3
+}
